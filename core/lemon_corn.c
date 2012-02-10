@@ -1,0 +1,649 @@
+/*
+ * Copyright (c) 2012 Toshihiro Kobayashi <kobacha@mwa.biglobe.ne.jp>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <fcntl.h>
+#include <libgen.h>
+#include <errno.h>
+#include <termios.h>
+#include <sys/stat.h>
+#include "file_util.h"
+#include "string_util.h"
+#include "PC-OP-RS1.h"
+
+#define DEBUG_HEAD_LEMON_CORN	"[lemon_corn] "
+#ifndef DEBUG_LEVEL_LEMON_CORN
+#define DEBUG_LEVEL_LEMON_CORN	0
+#endif
+#include "debug.h"
+
+#define DEFAULT_TTY_DEV		"/dev/ttyUSB0"
+
+#define TAG_LEN			32
+#define CMD_MAX			50
+#define BAUDRATE		B115200
+#define DATA_FN			"lemon_corn.data"
+
+#define APP_MODE_TRANSMIT	0
+#define APP_MODE_RECEIVE	1
+#define APP_MODE_LIST		2
+#define APP_MODE_DELETE		3
+
+#define LIST_MODE_HEX		0
+#define LIST_MODE_WAVE		1
+#define LIST_MODE_FORMATTED	2
+
+struct remocon_data {
+	char tag[TAG_LEN];
+	unsigned char data[PCOPRS1_DATA_LEN];
+};
+
+static struct app {
+	char *devname;
+	char *cmd[CMD_MAX + 1];
+	int cmd_cnt;
+	int ch;
+	unsigned long mode;
+	unsigned long list_mode;
+	char *data_dir, *data_fn;
+	struct remocon_data *data;
+	int data_cnt;
+	int trunc_len;
+	int is_arduino;
+	int is_virtual;
+} app;
+
+static int serial_open(const char *devname, struct termios *tio_old)
+{
+	struct termios tio_new;
+	int fd;
+
+	fd = open(devname, O_RDWR | O_NOCTTY);
+	if (fd < 0) {
+		app_error("device open failed: %s (%s)\n",
+			  devname, strerror(errno));
+		return -1;
+	}
+
+	tcgetattr(fd, tio_old);
+
+	tio_new.c_cflag = BAUDRATE | CS8 | CLOCAL | CREAD;
+	tio_new.c_iflag = 0;
+	tio_new.c_oflag = 0;
+	tio_new.c_lflag = 0;
+	tio_new.c_cc[VMIN] = 1;
+	tio_new.c_cc[VTIME] = 0;
+
+	tcflush(fd, TCIFLUSH);
+	tcsetattr(fd, TCSANOW, &tio_new);
+
+	return fd;
+}
+
+static int serial_close(int fd, const struct termios *tio_old)
+{
+	tcsetattr(fd, TCSANOW, tio_old);
+	return close(fd);
+}
+
+static char *hexdump(char *dst, const unsigned char *data, size_t sz)
+{
+	int i;
+
+	for (i = 0; i < sz; i++)
+		sprintf(&dst[i * 2], "%02x", data[i]);
+
+	return dst;
+}
+
+static int find_cmd_idx(const char *tag, const struct remocon_data *data,
+			int data_cnt)
+{
+	int i;
+
+	for (i = 0; i < data_cnt; i++)
+		if (!strcmp(tag, data[i].tag))
+			return i;
+	/* did not match */
+	return -1;
+}
+
+static int remocon_send(int fd, const unsigned char *data, size_t sz)
+{
+	const unsigned char *rp;
+	int rest, wcnt;
+
+	if (app.is_virtual)
+		return sz;
+
+	for (rp = data, rest = sz; rest; rp += wcnt, rest -= wcnt) {
+		wcnt = write(fd, rp, rest);
+		if (wcnt < 0) {
+			app_error("write error: %s\n", strerror(errno));
+			return wcnt;
+		}
+	}
+
+#if (DEBUG_LEVEL_LEMON_CORN >= 1)
+{
+	char s[sz * 2 + 1];
+	app_debug(LEMON_CORN, 1, "sent: %s\n", hexdump(s, data, sz));
+}
+#endif
+
+	return sz;
+}
+
+static int remocon_read(int fd, unsigned char *data, size_t sz)
+{
+	unsigned char *rp;
+	int rest, rcnt;
+
+	app_debug(LEMON_CORN, 1, "waiting for data...\n");
+	for (rp = data, rest = sz; rest; rp += rcnt, rest -= rcnt) {
+		rcnt = read(fd, rp, rest);
+		if (rcnt < 0) {
+			app_error("read error: %s\n", strerror(errno));
+			return rcnt;
+		}
+	}
+
+#if (DEBUG_LEVEL_LEMON_CORN >= 1)
+{
+	char s[sz * 2 + 1];
+	app_debug(LEMON_CORN, 1, "read: %s\n", hexdump(s, data, sz));
+}
+#endif
+
+	return sz;
+}
+
+static int remocon_expect(int fd, unsigned char expect)
+{
+	unsigned char c;
+
+	if (app.is_virtual)
+		return 0;
+
+	remocon_read(fd, &c, 1);
+	if (c != expect) {
+		app_error("expect '%c'(0x%02x), but got '%c'(0x%02x)\n",
+			  expect, expect, c, c);
+		return -1;
+	}
+	return 0;
+}
+
+static int remocon_expect2(int fd, unsigned char *expect_ary, int len)
+{
+	unsigned char c;
+	char buf[256];
+	int i;
+
+	if (app.is_virtual)
+		return 0;
+
+	remocon_read(fd, &c, 1);
+	for (i = 0; i < len; i++)
+		if (c == expect_ary[i])
+			return 0;
+
+	for (i = 0; i < len; i++)
+		strcatf(buf, " '%c'(0x%02x)", expect_ary[i], expect_ary[i]);
+	app_error("expect %s\n", buf);
+	app_error("but got '%c'(0x%02x)\n", c, c);
+	return -1;
+}
+
+static int transmit(int fd, int ch, const unsigned char *data, size_t sz)
+{
+	unsigned char c;
+
+	c = PCOPRS1_CMD_TRANSMIT;
+	if (remocon_send(fd, &c, 1) < 0)
+		return -1;
+	if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
+		return -1;
+	c = PCOPRS1_CMD_CHANNEL(ch);
+	if (remocon_send(fd, &c, 1) < 0)
+		return -1;
+	if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
+		return -1;
+	if (remocon_send(fd, data, sz) < 0)
+		return -1;
+	if (remocon_expect(fd, PCOPRS1_CMD_DATA_COMPLETION) < 0)
+		return -1;
+
+	return 0;
+}
+
+static int receive(int fd, unsigned char *data, size_t sz)
+{
+	unsigned char c;
+
+	if (sz < PCOPRS1_DATA_LEN) {
+		app_error("not enough receive data buffer size\n");
+		return -1;
+	}
+
+	c = PCOPRS1_CMD_RECEIVE;
+	if (remocon_send(fd, &c, 1) < 0)
+		return -1;
+	if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
+		return -1;
+	if (remocon_expect(fd, PCOPRS1_CMD_RECEIVE_DATA) < 0)
+		return -1;
+	if ((sz = remocon_read(fd, data, PCOPRS1_DATA_LEN)) < 0)
+		return -1;
+	if (remocon_expect(fd, PCOPRS1_CMD_DATA_COMPLETION) < 0)
+		return -1;
+
+	return sz;
+}
+
+static int transmit_cmd(int fd, const char *cmd)
+{
+	if (!strncmp(cmd, "_sleep", 6)) {
+		int time = atoi(&cmd[6]);
+		printf("sleeping %d sec(s)...\n", time);
+		sleep(time);
+	} else {
+		int d_idx = find_cmd_idx(cmd, app.data, app.data_cnt);
+		if (d_idx < 0) {
+			app_error("Unknown command: %s\n", cmd);
+			return -1;
+		}
+		printf("transmitting %s ...\n", cmd);
+		transmit(fd, app.ch, app.data[d_idx].data, PCOPRS1_DATA_LEN);
+		usleep(500000);
+	}
+
+	return 0;
+}
+
+static void transmit_cmdline(int fd)
+{
+	int i;
+
+	for (i = 0; i < app.cmd_cnt; i++) {
+		if (!strncmp(app.cmd[i], "_sleep", 6)) {
+			int time = atoi(&app.cmd[i][6]);
+			printf("sleeping %d sec(s)...\n", time);
+			sleep(atoi(&app.cmd[i][6]));
+		} else
+			transmit_cmd(fd, app.cmd[i]);
+	}
+}
+
+static char *fgets_prompt(char *s, int size, FILE *stream)
+{
+	printf("> ");
+	return fgets(s, size, stream);
+}
+
+static void transmit_interactive(int fd)
+{
+	char s[64];
+
+	while (fgets_prompt(s, sizeof(s), stdin)) {
+		strchomp(s);
+		if (!strcmp(s, "quit"))
+			break;
+		if (transmit_cmd(fd, s) == 0)
+			printf("OK\n");
+	}
+}
+
+static void transmit_main(int fd)
+{
+	unsigned char c;
+	unsigned char ex_ary[2];
+
+	if (app.is_arduino) {	/* need serial setup time */
+		printf("wait for arduino serial setup...\n");
+		sleep(2);
+	}
+	c = PCOPRS1_CMD_LED;
+	remocon_send(fd, &c, 1);
+	ex_ary[0] = PCOPRS1_CMD_LED_OK;
+	ex_ary[1] = PCOPRS1_CMD_OK;
+	remocon_expect2(fd, ex_ary, sizeof(ex_ary));
+
+	if (app.cmd_cnt > 0)
+		transmit_cmdline(fd);
+	else
+		transmit_interactive(fd);
+}
+
+static void receive_main(int fd)
+{
+	struct remocon_data *new_data;
+	int new_data_cnt;
+	unsigned char c;
+	unsigned char ex_ary[2];
+	struct stat st;
+	int data_fd;
+	int r;
+	int i;
+
+	if (app.is_arduino) {	/* need serial setup time */
+		printf("wait for arduino serial setup...\n");
+		sleep(2);
+	}
+	c = PCOPRS1_CMD_LED;
+	remocon_send(fd, &c, 1);
+	ex_ary[0] = PCOPRS1_CMD_LED_OK;
+	ex_ary[1] = PCOPRS1_CMD_OK;
+	remocon_expect2(fd, ex_ary, sizeof(ex_ary));
+
+	if (app.cmd_cnt == 0) {
+		unsigned char rbuf[PCOPRS1_DATA_LEN];
+		char s[PCOPRS1_DATA_LEN * 2 + 1];
+		r = receive(fd, rbuf, PCOPRS1_DATA_LEN);
+		if (r < 0)
+			return;
+		if (app.trunc_len < PCOPRS1_DATA_LEN)
+			memset(rbuf + app.trunc_len, 0,
+			       PCOPRS1_DATA_LEN - app.trunc_len);
+		printf("%s\n", hexdump(s, rbuf, r));
+		return;
+	}
+
+	new_data = malloc(sizeof(struct remocon_data) * app.cmd_cnt);
+	if (new_data == NULL) {
+		app_error("memory allocation failed.\n");
+		return;
+	}
+
+	new_data_cnt = 0;
+	for (i = 0; i < app.cmd_cnt; i++) {
+		struct remocon_data *dst;
+		int d_idx;
+
+		printf("waiting ir data for %s ...\n", app.cmd[i]);
+
+		d_idx = find_cmd_idx(app.cmd[i], app.data, app.data_cnt);
+		if (d_idx >= 0) {
+			dst = &app.data[d_idx];
+		} else {
+			dst = &new_data[new_data_cnt++];
+			memset(dst->tag, 0, TAG_LEN);
+			strcpy(dst->tag, app.cmd[i]);
+		}
+		r = receive(fd, dst->data, PCOPRS1_DATA_LEN);
+		if (r < 0)
+			return;
+		if (app.trunc_len < PCOPRS1_DATA_LEN)
+			memset(dst->data + app.trunc_len, 0,
+			       PCOPRS1_DATA_LEN - app.trunc_len);
+		printf("received.\n");
+	}
+
+	/* data file write */
+	if (stat(app.data_dir, &st) < 0) {
+		if (mkdir(app.data_dir, 0755) < 0) {
+			app_error("mkdir failed: %s (%s)\n",
+				  app.data_fn, strerror(errno));
+			return;
+		}
+	}
+	if ((data_fd = open(app.data_fn, O_WRONLY | O_CREAT, 0644)) < 0) {
+		app_error("data file open failed: %s (%s)\n",
+			  app.data_fn, strerror(errno));
+		return;
+	}
+	write(data_fd, app.data, sizeof(struct remocon_data) * app.data_cnt);
+	write(data_fd, new_data, sizeof(struct remocon_data) * new_data_cnt);
+	close(data_fd);
+	printf("written new data to %s.\n", app.data_fn);
+
+	free(new_data);
+}
+
+static void list_main(int fd)
+{
+	char s[PCOPRS1_DATA_LEN * 8 + 1];
+	int d_idx;
+	int i;
+
+	for (d_idx = 0; d_idx < app.data_cnt; d_idx++) {
+		if (app.cmd_cnt) {
+			int hit = 0;
+			for (i = 0; i < app.cmd_cnt; i++) {
+				if (!strcmp(app.cmd[i], app.data[d_idx].tag))
+					hit = 1;
+			}
+			if (!hit)
+				continue;
+		}
+		printf("%s:\n", app.data[d_idx].tag);
+		switch (app.list_mode) {
+		case LIST_MODE_HEX:
+			printf("%s\n",
+			       hexdump(s, app.data[d_idx].data,
+				       PCOPRS1_DATA_LEN));
+			break;
+		}
+	}
+}
+
+static void delete_main(int fd)
+{
+	char flag[app.data_cnt];
+	int data_fd;
+	int i, d_idx;
+
+	memset(flag, 0, app.data_cnt);
+	for (i = 0; i < app.cmd_cnt; i++) {
+		d_idx = find_cmd_idx(app.cmd[i], app.data, app.data_cnt);
+		if (d_idx < 0) {
+			app_error("Unknown command: %s\n", app.cmd[i]);
+			continue;
+		}
+		printf("deleting %s\n", app.cmd[i]);
+		flag[d_idx] = 1;
+	}
+
+	/* data file write */
+	if ((data_fd = open(app.data_fn, O_WRONLY | O_TRUNC)) < 0) {
+		app_error("data file open failed: %s (%s)\n",
+			  app.data_fn, strerror(errno));
+		return;
+	}
+	for (d_idx = 0; d_idx < app.data_cnt; d_idx++) {
+		if (!flag[d_idx])
+			write(data_fd, &app.data[d_idx],
+			      sizeof(struct remocon_data));
+	}
+	close(data_fd);
+	printf("written new data.\n");
+}
+
+static void usage(const char *cmd_path)
+{
+	char *cpy_path = strdup(cmd_path);
+
+	fprintf(stderr,
+		"usage: %s\n"
+		"        [-r <command(s)>] (receive)\n"
+		"        [-l]              (list with hex)\n"
+		"        [-d <command(s)>] (delete)\n"
+		"        [command(s)]      (send)\n"
+		"        [-s <serial device>]"
+				" (default is " DEFAULT_TTY_DEV ")\n"
+		"        [-ch <channel>]\n"
+		"        [-h]\n",
+		basename(cpy_path));
+	free(cpy_path);
+}
+
+/*
+ * parse command line options
+ * return value:
+ *   0: success
+ *  -1: error
+ *   1: show usage and exit
+ */
+static int parse_arg(int argc, char *argv[])
+{
+	int str_id = 0;
+	int i;
+
+	/* init */
+	app.data_dir = NULL;
+	app.devname = DEFAULT_TTY_DEV;
+	app.ch = 1;
+	app.mode = APP_MODE_TRANSMIT;
+	memset(app.cmd, 0, sizeof(app.cmd));
+	app.cmd_cnt = 0;
+	app.trunc_len = PCOPRS1_DATA_LEN;
+	app.is_arduino = 0;
+	app.is_virtual = 0;
+
+	for (i = 1; i < argc; i++) {
+		if (!strcmp(argv[i], "-s")) {
+			if (++i == argc)
+				return -1;
+			app.devname = argv[i];
+		} else if (!strcmp(argv[i], "-r")) {
+			app.mode = APP_MODE_RECEIVE;
+		} else if (!strcmp(argv[i], "-l")) {
+			app.mode = APP_MODE_LIST;
+			app.list_mode = LIST_MODE_HEX;
+		} else if (!strcmp(argv[i], "-d")) {
+			app.mode = APP_MODE_DELETE;
+		} else if (!strcmp(argv[i], "-ch")) {
+			if (++i == argc)
+				return -1;
+			app.ch = atoi(argv[i]);
+		} else if (!strcmp(argv[i], "-h")) {
+			return 1;
+		} else {
+			/* string options */
+			switch (str_id) {
+			case 0 ... CMD_MAX:
+				app.cmd[app.cmd_cnt++] = argv[i];
+				break;
+			default:
+				return -1;
+			}
+			str_id++;
+		}
+	}
+
+	/* sanity check */
+	if (app.devname == NULL)
+		return -1;
+	if ((app.mode == APP_MODE_DELETE) && (app.cmd_cnt == 0))
+		return -1;
+	if ((app.ch < 1) || (app.ch > 4)) {
+		app_error("bad channel (%d)\n", app.ch);
+		return -1;
+	}
+
+	/* defaults */
+	if (app.data_dir == NULL) {
+		char *home_dir = getenv("HOME");
+		if (home_dir) {
+			char *subdir = ".remocon";
+			app.data_dir =
+				malloc(strlen(home_dir) + strlen(subdir) + 2);
+			if (app.data_dir == NULL) {
+				app_error("%s(): memory allocation failed.\n",
+					  __func__);
+				return -1;
+			}
+			sprintf(app.data_dir, "%s/%s", home_dir, subdir);
+		} else
+			app.data_dir = "/var/remocon";
+	}
+
+	app.data_fn = malloc(strlen(app.data_dir) + sizeof(DATA_FN) + 2);
+	if (app.data_fn == NULL) {
+		app_error("%s(): memory allocation failed.\n", __func__);
+		return -1;
+	}
+	sprintf(app.data_fn, "%s/%s", app.data_dir, DATA_FN);
+
+	return 0;
+}
+
+int main(int argc, char **argv)
+{
+	int fd;
+	struct termios tio_old;
+	struct stat st;
+	ssize_t data_sz;
+	int r;
+
+	r = parse_arg(argc, argv);
+	if (r < 0) {
+		usage(argv[0]);
+		return 1;
+	} else if (r == 1) {
+		usage(argv[0]);
+		return 0;
+	}
+
+	/* device file setup */
+	if (app.is_virtual ||
+	    (app.mode == APP_MODE_LIST) ||
+	    (app.mode == APP_MODE_DELETE))
+		fd = 0;
+	else {
+		if ((fd = serial_open(app.devname, &tio_old)) < 0)
+			return 1;
+	}
+
+	/* data */
+	if ((app.mode != APP_MODE_RECEIVE) && (stat(app.data_fn, &st) < 0)) {
+		app_error("data file not found: %s\n", app.data_fn);
+		goto out;
+	}
+	if ((data_sz = try_get_file_image((void **)&app.data, app.data_fn)) < 0)
+		data_sz = 0;
+	app.data_cnt = data_sz / sizeof(struct remocon_data);
+
+	/* main */
+	switch (app.mode) {
+	case APP_MODE_TRANSMIT:
+		transmit_main(fd);
+		break;
+	case APP_MODE_RECEIVE:
+		receive_main(fd);
+		break;
+	case APP_MODE_LIST:
+		list_main(fd);
+		break;
+	case APP_MODE_DELETE:
+		delete_main(fd);
+		break;
+	}
+
+out:
+	if (fd)
+		serial_close(fd, &tio_old);
+
+	return 0;
+}

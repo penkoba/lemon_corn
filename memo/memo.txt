@@ -1,0 +1,8 @@
+送受信データ：0.1msごとのサンプル(LSB first!)
+240byte = 1920bit (192ms)
+
+http://www.nts-ltd.co.jp/wordpress/archives/247
+Sony TV
+0x15 電源トグル
+0x2e 電源オン
+0x2f 電源オフ
