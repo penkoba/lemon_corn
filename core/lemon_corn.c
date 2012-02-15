@@ -566,7 +566,7 @@ static int parse_arg(int argc, char *argv[])
 	if (app.data_dir == NULL) {
 		char *home_dir = getenv("HOME");
 		if (home_dir) {
-			char *subdir = ".remocon";
+			char *subdir = ".lemon_corn";
 			app.data_dir =
 				malloc(strlen(home_dir) + strlen(subdir) + 2);
 			if (app.data_dir == NULL) {
@@ -576,7 +576,7 @@ static int parse_arg(int argc, char *argv[])
 			}
 			sprintf(app.data_dir, "%s/%s", home_dir, subdir);
 		} else
-			app.data_dir = "/var/remocon";
+			app.data_dir = "/var/lemon_corn";
 	}
 
 	app.data_fn = malloc(strlen(app.data_dir) + sizeof(DATA_FN) + 2);
