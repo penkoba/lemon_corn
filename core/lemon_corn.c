@@ -50,9 +50,8 @@
 #define APP_MODE_LIST		2
 #define APP_MODE_DELETE		3
 
-#define LIST_MODE_HEX		0
-#define LIST_MODE_WAVE		1
-#define LIST_MODE_FORMATTED	2
+#define LIST_MODE_NONE		0
+#define LIST_MODE_HEX		1
 
 struct remocon_data {
 	char tag[TAG_LEN];
@@ -437,9 +436,12 @@ static void list_main(int fd)
 			if (!hit)
 				continue;
 		}
-		printf("%s:\n", app.data[d_idx].tag);
 		switch (app.list_mode) {
+		case LIST_MODE_NONE:
+			printf("%s\n", app.data[d_idx].tag);
+			break;
 		case LIST_MODE_HEX:
+			printf("%s:\n", app.data[d_idx].tag);
 			printf("%s\n",
 			       hexdump(s, app.data[d_idx].data,
 				       PCOPRS1_DATA_LEN));
@@ -487,6 +489,7 @@ static void usage(const char *cmd_path)
 	fprintf(stderr,
 		"usage: %s\n"
 		"        [-r <command(s)>] (receive)\n"
+		"        [-cl]             (command list)\n"
 		"        [-l]              (list with hex)\n"
 		"        [-d <command(s)>] (delete)\n"
 		"        [command(s)]      (send)\n"
@@ -528,6 +531,9 @@ static int parse_arg(int argc, char *argv[])
 			app.devname = argv[i];
 		} else if (!strcmp(argv[i], "-r")) {
 			app.mode = APP_MODE_RECEIVE;
+		} else if (!strcmp(argv[i], "-cl")) {
+			app.mode = APP_MODE_LIST;
+			app.list_mode = LIST_MODE_NONE;
 		} else if (!strcmp(argv[i], "-l")) {
 			app.mode = APP_MODE_LIST;
 			app.list_mode = LIST_MODE_HEX;
