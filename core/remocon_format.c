@@ -319,24 +319,24 @@ static void nec_analyzer_init(analyzer_t *a)
 
 
 /*
- * Panasonic / SHARP format
+ * AEHA (Panasonic, SHARP etc.) format
  *
  * | leader | data | stop bit | trailer |
- * leader:  ------------------------------...............  3.5ms / 1.5ms
- * data0:   -----.....                                     0.4ms / 0.4ms
- * data1:   -----.................                         0.4ms / 1.2ms
- * trailer: ..............................                 20.0ms
+ * leader:  ------------------------------...............  3.4ms / 1.7ms
+ * data0:   -----.....                                     0.425ms / 0.425ms
+ * data1:   -----.................                         0.425ms / 1.275ms
+ * trailer: ..............................                 20.0ms (> 8ms)
  *
  * data: 48 bit
  */
-#define PANA_DATA_H_LEN_MIN	3	/* typ = 4 */
-#define PANA_DATA_H_LEN_MAX	5
-#define PANA_DATA0_L_LEN_MIN	3	/* typ = 4 */
-#define PANA_DATA0_L_LEN_MAX	5
-#define PANA_DATA1_L_LEN_MIN	10	/* typ = 12 */
-#define PANA_DATA1_L_LEN_MAX	14
+#define AEHA_DATA_H_LEN_MIN	3	/* typ = 4 */
+#define AEHA_DATA_H_LEN_MAX	5
+#define AEHA_DATA0_L_LEN_MIN	3	/* typ = 4 */
+#define AEHA_DATA0_L_LEN_MAX	5
+#define AEHA_DATA1_L_LEN_MIN	11	/* typ = 13 */
+#define AEHA_DATA1_L_LEN_MAX	14
 
-static int pana_check_dur0(const analyzer_t *analyzer)
+static int aeha_check_dur0(const analyzer_t *analyzer)
 {
 	if (analyzer->state == ANALIZER_STATE_LEADER) {
 		if ((analyzer->dur >= analyzer->leader_l_len_min) &&
@@ -347,13 +347,13 @@ static int pana_check_dur0(const analyzer_t *analyzer)
 			return DETECTED_PATTERN_LEADER;
 		}
 	} else if (analyzer->state == ANALIZER_STATE_DATA) {
-		if ((analyzer->dur >= PANA_DATA0_L_LEN_MIN) &&
-		    (analyzer->dur <= PANA_DATA0_L_LEN_MAX)) {
+		if ((analyzer->dur >= AEHA_DATA0_L_LEN_MIN) &&
+		    (analyzer->dur <= AEHA_DATA0_L_LEN_MAX)) {
 			app_debug(REMOCON_FORMAT, 2, "%sdata0 at %d\n",
 				  analyzer->msg_head, analyzer->src_idx);
 			return DETECTED_PATTERN_DATA0;
-		} else if ((analyzer->dur >= PANA_DATA1_L_LEN_MIN) &&
-			   (analyzer->dur <= PANA_DATA1_L_LEN_MAX)) {
+		} else if ((analyzer->dur >= AEHA_DATA1_L_LEN_MIN) &&
+			   (analyzer->dur <= AEHA_DATA1_L_LEN_MAX)) {
 			app_debug(REMOCON_FORMAT, 2, "%sdata1 at %d\n",
 				  analyzer->msg_head, analyzer->src_idx);
 			return DETECTED_PATTERN_DATA1;
@@ -369,15 +369,15 @@ static int pana_check_dur0(const analyzer_t *analyzer)
 	return -1;
 }
 
-static int pana_check_dur1(const analyzer_t *analyzer)
+static int aeha_check_dur1(const analyzer_t *analyzer)
 {
 	if (analyzer->state == ANALIZER_STATE_LEADER) {
 		if ((analyzer->dur >= analyzer->leader_h_len_min) &&
 		    (analyzer->dur <= analyzer->leader_h_len_max))
 			return 0;
 	} else if (analyzer->state == ANALIZER_STATE_DATA) {
-		if ((analyzer->dur >= PANA_DATA_H_LEN_MIN) &&
-		    (analyzer->dur <= PANA_DATA_H_LEN_MAX))
+		if ((analyzer->dur >= AEHA_DATA_H_LEN_MIN) &&
+		    (analyzer->dur <= AEHA_DATA_H_LEN_MAX))
 			return 0;
 	}
 
@@ -388,28 +388,28 @@ static int pana_check_dur1(const analyzer_t *analyzer)
 	return -1;
 }
 
-static int pana_check_unconditional(const analyzer_t *analyzer)
+static int aeha_check_unconditional(const analyzer_t *analyzer)
 {
 	return 0;
 }
 
-static void pana_analyzer_init(analyzer_t *a)
+static void aeha_analyzer_init(analyzer_t *a)
 {
-	a->msg_head = "[PANA] ";
+	a->msg_head = "[AEHA] ";
 	a->data_bit_len_min = 48;	/* SHARP dvd, Panasonic STB */
 	a->data_bit_len_max = 48;
 	a->data_len = 6;
-	a->leader_h_len_min = 32;	/* typ = 35 */
-	a->leader_h_len_max = 38;
-	a->leader_l_len_min = 12;	/* typ = 15 */
-	a->leader_l_len_max = 18;
-	a->trailer_l_len_min = 180;	/* typ = 200 (SHARP dvd) */
-	a->trailer_l_len_max = 220;
+	a->leader_h_len_min = 31;	/* typ = 34 */
+	a->leader_h_len_max = 37;
+	a->leader_l_len_min = 14;	/* typ = 17 */
+	a->leader_l_len_max = 20;
+	a->trailer_l_len_min = 80;	/* typ = 200 (SHARP dvd) */
+	a->trailer_l_len_max = 10000;	/* no condition */
 	a->cycle_len_min = 0;		/* no condition */
 	a->cycle_len_max = 10000;	/* no condition */
-	a->check_dur0 = pana_check_dur0;
-	a->check_dur1 = pana_check_dur1;
-	a->check_unconditional = pana_check_unconditional;
+	a->check_dur0 = aeha_check_dur0;
+	a->check_dur1 = aeha_check_dur1;
+	a->check_unconditional = aeha_check_unconditional;
 	a->set_dest = set_dest;
 }
 
@@ -781,11 +781,26 @@ int remocon_format_analyze(char *fmt_tag, char *dst,
 	unsigned char buf[DATA_LEN_MAX];
 	analyzer_t analyzer;
 
-	pana_analyzer_init(&analyzer);
+	aeha_analyzer_init(&analyzer);
 	if (analyze(&analyzer, buf, data, sz) >= 0) {
-		strcpy(fmt_tag, "PANA");
-		sprintf(dst, "%02x%02x%02x%02x%02x%02x",
-			buf[5], buf[4], buf[3], buf[2], buf[1], buf[0]);
+		unsigned short custom = ((unsigned short)buf[0] << 8) | buf[1];
+		unsigned char parity = buf[2] & 0xf;
+		unsigned long cmd = (((unsigned long)buf[2] & 0xf0) << 20) |
+				     ((unsigned long)buf[3] << 16) |
+				     ((unsigned long)buf[4] <<  8) |
+				      (unsigned long)buf[5];
+		if ((((buf[0] >> 4) & 0xf) ^
+		      (buf[0] & 0xf) ^
+		     ((buf[1] >> 4) & 0xf) ^
+		      (buf[1] & 0xf)) != parity) {
+			app_debug(REMOCON_FORMAT, 1,
+				  "AEHA pattern detected, but"
+				  " parity is inconsistent.\n"
+				  "%04x %01x %07x",
+				  custom, parity, cmd);
+		}
+		strcpy(fmt_tag, "AEHA");
+		sprintf(dst, "%04x %07x", custom, cmd);
 		return 0;
 	}
 
