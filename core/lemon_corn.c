@@ -28,6 +28,7 @@
 #include <errno.h>
 #include <termios.h>
 #include <sys/stat.h>
+#include "remocon_format.h"
 #include "file_util.h"
 #include "string_util.h"
 #include "PC-OP-RS1.h"
@@ -52,6 +53,8 @@
 
 #define LIST_MODE_NONE		0
 #define LIST_MODE_HEX		1
+#define LIST_MODE_WAVE		2
+#define LIST_MODE_FORMATTED	3
 
 struct remocon_data {
 	char tag[TAG_LEN];
@@ -69,7 +72,6 @@ static struct app {
 	struct remocon_data *data;
 	int data_cnt;
 	int trunc_len;
-	int is_arduino;
 	int is_virtual;
 } app;
 
@@ -112,6 +114,18 @@ static char *hexdump(char *dst, const unsigned char *data, size_t sz)
 
 	for (i = 0; i < sz; i++)
 		sprintf(&dst[i * 2], "%02x", data[i]);
+
+	return dst;
+}
+
+static char *wavedump(char *dst, const unsigned char *data, size_t sz)
+{
+	int i, j = 0;
+	unsigned char bit;
+
+	for (i = 0; i < sz; i++)
+		for (bit = 0x01; bit != 0x00; j++, bit <<= 1)
+			dst[j] = (data[i] & bit) ? '-' : '.';
 
 	return dst;
 }
@@ -319,10 +333,6 @@ static void transmit_main(int fd)
 	unsigned char c;
 	unsigned char ex_ary[2];
 
-	if (app.is_arduino) {	/* need serial setup time */
-		printf("wait for arduino serial setup...\n");
-		sleep(2);
-	}
 	c = PCOPRS1_CMD_LED;
 	remocon_send(fd, &c, 1);
 	ex_ary[0] = PCOPRS1_CMD_LED_OK;
@@ -346,10 +356,6 @@ static void receive_main(int fd)
 	int r;
 	int i;
 
-	if (app.is_arduino) {	/* need serial setup time */
-		printf("wait for arduino serial setup...\n");
-		sleep(2);
-	}
 	c = PCOPRS1_CMD_LED;
 	remocon_send(fd, &c, 1);
 	ex_ary[0] = PCOPRS1_CMD_LED_OK;
@@ -422,6 +428,7 @@ static void receive_main(int fd)
 
 static void list_main(int fd)
 {
+	char fmt_tag[32];
 	char s[PCOPRS1_DATA_LEN * 8 + 1];
 	int d_idx;
 	int i;
@@ -445,6 +452,24 @@ static void list_main(int fd)
 			printf("%s\n",
 			       hexdump(s, app.data[d_idx].data,
 				       PCOPRS1_DATA_LEN));
+			break;
+		case LIST_MODE_WAVE:
+			printf("%s:\n", app.data[d_idx].tag);
+			printf("%s\n",
+			       wavedump(s, app.data[d_idx].data,
+					PCOPRS1_DATA_LEN));
+			break;
+		case LIST_MODE_FORMATTED:
+			printf("%s:\n", app.data[d_idx].tag);
+			if (remocon_format_analyze(fmt_tag, s,
+						   app.data[d_idx].data,
+						   PCOPRS1_DATA_LEN) < 0) {
+				printf("unknown format!\n%s\n",
+				       hexdump(s, app.data[d_idx].data,
+					       PCOPRS1_DATA_LEN));
+				break;
+			}
+			printf("format = %s, data = %s\n", fmt_tag, s);
 			break;
 		}
 	}
@@ -487,16 +512,20 @@ static void usage(const char *cmd_path)
 	char *cpy_path = strdup(cmd_path);
 
 	fprintf(stderr,
-		"usage: %s\n"
-		"        [-r <command(s)>] (receive)\n"
-		"        [-cl]             (command list)\n"
-		"        [-l]              (list with hex)\n"
-		"        [-d <command(s)>] (delete)\n"
-		"        [command(s)]      (send)\n"
-		"        [-s <serial device>]"
-				" (default is " DEFAULT_TTY_DEV ")\n"
-		"        [-ch <channel>]\n"
-		"        [-h]\n",
+"usage: %s\n"
+"        [-r <command(s)>]    (receive)\n"
+"        [-cl]                (command list)\n"
+"        [-l]                 (list with hex)\n"
+"        [-p]                 (list with waveform)\n"
+"        [-f]                 (list with format analysis)\n"
+"        [-d <command(s)>]    (delete)\n"
+"        [command(s)]         (send)\n"
+"        [-s <serial device>] (default is " DEFAULT_TTY_DEV ")\n"
+"        [-ch <channel>]      (default is 1)\n"
+"        [-dd <data_dir>]     (searches default locations if not specified)\n"
+"        [-trunc <trunc_len>] (truncate received signal)\n"
+"        [-virtual]           (virtual mode)\n"
+"        [-h]                 (help)\n",
 		basename(cpy_path));
 	free(cpy_path);
 }
@@ -521,7 +550,6 @@ static int parse_arg(int argc, char *argv[])
 	memset(app.cmd, 0, sizeof(app.cmd));
 	app.cmd_cnt = 0;
 	app.trunc_len = PCOPRS1_DATA_LEN;
-	app.is_arduino = 0;
 	app.is_virtual = 0;
 
 	for (i = 1; i < argc; i++) {
@@ -537,12 +565,28 @@ static int parse_arg(int argc, char *argv[])
 		} else if (!strcmp(argv[i], "-l")) {
 			app.mode = APP_MODE_LIST;
 			app.list_mode = LIST_MODE_HEX;
+		} else if (!strcmp(argv[i], "-p")) {
+			app.mode = APP_MODE_LIST;
+			app.list_mode = LIST_MODE_WAVE;
+		} else if (!strcmp(argv[i], "-f")) {
+			app.mode = APP_MODE_LIST;
+			app.list_mode = LIST_MODE_FORMATTED;
 		} else if (!strcmp(argv[i], "-d")) {
 			app.mode = APP_MODE_DELETE;
 		} else if (!strcmp(argv[i], "-ch")) {
 			if (++i == argc)
 				return -1;
 			app.ch = atoi(argv[i]);
+		} else if (!strcmp(argv[i], "-dd")) {
+			if (++i == argc)
+				return -1;
+			app.data_dir = argv[i];
+		} else if (!strcmp(argv[i], "-trunc")) {
+			if (++i == argc)
+				return -1;
+			app.trunc_len = atoi(argv[i]);
+		} else if (!strcmp(argv[i], "-virtual")) {
+			app.is_virtual = 1;
 		} else if (!strcmp(argv[i], "-h")) {
 			return 1;
 		} else {
