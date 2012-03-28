@@ -50,6 +50,7 @@
 #define APP_MODE_RECEIVE	1
 #define APP_MODE_LIST		2
 #define APP_MODE_DELETE		3
+#define APP_MODE_FORGE		4
 
 #define LIST_MODE_NONE		0
 #define LIST_MODE_HEX		1
@@ -70,6 +71,7 @@ static struct app {
 	unsigned long list_mode;
 	char *data_dir, *data_fn;
 	struct remocon_data *data;
+	char *forge_fmt;
 	int data_cnt;
 	int trunc_len;
 	int is_virtual;
@@ -345,14 +347,35 @@ static void transmit_main(int fd)
 		transmit_interactive(fd);
 }
 
+static void save_cmd(const struct remocon_data *new_data, int cnt)
+{
+	struct stat st;
+	int fd;
+
+	if (stat(app.data_dir, &st) < 0) {
+		if (mkdir(app.data_dir, 0755) < 0) {
+			app_error("mkdir failed: %s (%s)\n",
+				  app.data_fn, strerror(errno));
+			return;
+		}
+	}
+	if ((fd = open(app.data_fn, O_WRONLY | O_CREAT, 0644)) < 0) {
+		app_error("data file open failed: %s (%s)\n",
+			  app.data_fn, strerror(errno));
+		return;
+	}
+	write(fd, app.data, sizeof(struct remocon_data) * app.data_cnt);
+	write(fd, new_data, sizeof(struct remocon_data) * cnt);
+	close(fd);
+	printf("written new data to %s.\n", app.data_fn);
+}
+
 static void receive_main(int fd)
 {
 	struct remocon_data *new_data;
 	int new_data_cnt;
 	unsigned char c;
 	unsigned char ex_ary[2];
-	struct stat st;
-	int data_fd;
 	int r;
 	int i;
 
@@ -406,27 +429,12 @@ static void receive_main(int fd)
 	}
 
 	/* data file write */
-	if (stat(app.data_dir, &st) < 0) {
-		if (mkdir(app.data_dir, 0755) < 0) {
-			app_error("mkdir failed: %s (%s)\n",
-				  app.data_fn, strerror(errno));
-			return;
-		}
-	}
-	if ((data_fd = open(app.data_fn, O_WRONLY | O_CREAT, 0644)) < 0) {
-		app_error("data file open failed: %s (%s)\n",
-			  app.data_fn, strerror(errno));
-		return;
-	}
-	write(data_fd, app.data, sizeof(struct remocon_data) * app.data_cnt);
-	write(data_fd, new_data, sizeof(struct remocon_data) * new_data_cnt);
-	close(data_fd);
-	printf("written new data to %s.\n", app.data_fn);
+	save_cmd(new_data, new_data_cnt);
 
 	free(new_data);
 }
 
-static void list_main(int fd)
+static void list_main(void)
 {
 	char fmt_tag[32];
 	char s[PCOPRS1_DATA_LEN * 8 + 1];
@@ -475,7 +483,7 @@ static void list_main(int fd)
 	}
 }
 
-static void delete_main(int fd)
+static void delete_main(void)
 {
 	char flag[app.data_cnt];
 	int data_fd;
@@ -507,6 +515,68 @@ static void delete_main(int fd)
 	printf("written new data.\n");
 }
 
+static void forge_main(void)
+{
+	struct remocon_data new_data;
+	struct remocon_data *dst;
+	int d_idx;
+	char *p0, *p1, *p2;
+
+	p0 = app.forge_fmt;
+	for (p1 = p0; *p1 != ','; p1++)
+		if (!*p1)
+			goto format_err;
+	p1++;
+	for (p2 = p1; *p2 != ','; p2++)
+		if (!*p2)
+			goto format_err;
+	p2++;
+
+	d_idx = find_cmd_idx(app.cmd[0], app.data, app.data_cnt);
+	if (d_idx >= 0) {
+		dst = &app.data[d_idx];
+	} else {
+		dst = &new_data;
+		memset(dst->tag, 0, TAG_LEN);
+		strcpy(dst->tag, app.cmd[0]);
+	}
+
+	if (!strncmp(p0, "AEHA,", p1 - p0)) {
+		unsigned long custom, cmd;
+		custom = strtol(p1, NULL, 16);
+		cmd    = strtol(p2, NULL, 16);
+		remocon_format_forge_aeha(dst->data, PCOPRS1_DATA_LEN,
+					  custom, cmd);
+	} else if (!strncmp(p0, "NEC,", p1 - p0)) {
+		unsigned long custom, cmd;
+		custom = strtol(p1, NULL, 16);
+		cmd    = strtol(p2, NULL, 16);
+		remocon_format_forge_nec(dst->data, PCOPRS1_DATA_LEN,
+					 (unsigned short)custom,
+					 (unsigned char)cmd);
+	} else if (!strncmp(p0, "SONY,", p1 - p0)) {
+		unsigned long prod, cmd;
+		prod = strtol(p1, NULL, 16);
+		cmd  = strtol(p2, NULL, 16);
+		remocon_format_forge_sony(dst->data, PCOPRS1_DATA_LEN,
+					  prod, cmd);
+	} else {
+		goto format_err;
+	}
+
+	/* data file write */
+	if (dst == &new_data)
+		save_cmd(&new_data, 1);	/* append new_data */
+	else
+		save_cmd(NULL, 0);	/* save modified data */
+
+
+	return;
+
+format_err:
+	printf("invalid forge format\n");
+}
+
 static void usage(const char *cmd_path)
 {
 	char *cpy_path = strdup(cmd_path);
@@ -524,6 +594,10 @@ static void usage(const char *cmd_path)
 "        [-ch <channel>]      (default is 1)\n"
 "        [-dd <data_dir>]     (searches default locations if not specified)\n"
 "        [-trunc <trunc_len>] (truncate received signal)\n"
+"        [-forge <format> <command>]  (forge command with known format)\n"
+"                 format: AEHA,<custom_hex>,<cmd_hex>\n"
+"                         NEC,<custom_hex>,<cmd_hex>\n"
+"                         SONY,<prod_hex>,<cmd_hex>\n"
 "        [-virtual]           (virtual mode)\n"
 "        [-h]                 (help)\n",
 		basename(cpy_path));
@@ -585,6 +659,11 @@ static int parse_arg(int argc, char *argv[])
 			if (++i == argc)
 				return -1;
 			app.trunc_len = atoi(argv[i]);
+		} else if (!strcmp(argv[i], "-forge")) {
+			app.mode = APP_MODE_FORGE;
+			if (++i == argc)
+				return -1;
+			app.forge_fmt = argv[i];
 		} else if (!strcmp(argv[i], "-virtual")) {
 			app.is_virtual = 1;
 		} else if (!strcmp(argv[i], "-h")) {
@@ -606,6 +685,8 @@ static int parse_arg(int argc, char *argv[])
 	if (app.devname == NULL)
 		return -1;
 	if ((app.mode == APP_MODE_DELETE) && (app.cmd_cnt == 0))
+		return -1;
+	if ((app.mode == APP_MODE_FORGE) && (app.cmd_cnt != 1))
 		return -1;
 	if ((app.ch < 1) || (app.ch > 4)) {
 		app_error("bad channel (%d)\n", app.ch);
@@ -659,7 +740,8 @@ int main(int argc, char **argv)
 	/* device file setup */
 	if (app.is_virtual ||
 	    (app.mode == APP_MODE_LIST) ||
-	    (app.mode == APP_MODE_DELETE))
+	    (app.mode == APP_MODE_DELETE) ||
+	    (app.mode == APP_MODE_FORGE))
 		fd = 0;
 	else {
 		if ((fd = serial_open(app.devname, &tio_old)) < 0)
@@ -684,10 +766,13 @@ int main(int argc, char **argv)
 		receive_main(fd);
 		break;
 	case APP_MODE_LIST:
-		list_main(fd);
+		list_main();
 		break;
 	case APP_MODE_DELETE:
-		delete_main(fd);
+		delete_main();
+		break;
+	case APP_MODE_FORGE:
+		forge_main();
 		break;
 	}
 

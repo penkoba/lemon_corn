@@ -7,7 +7,8 @@ Sony TV
 0x2e 電源オン
 0x2f 電源オフ
 
+http://d.hatena.ne.jp/tomo3i/20110820
 TOSHIBA TV
-0x21 電源トグル
-0x7e 電源オン
-0x7f 電源オフ
+0x12 電源トグル
+0x7e 電源オン？
+0x7f 電源オフ？
