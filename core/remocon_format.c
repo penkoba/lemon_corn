@@ -796,11 +796,11 @@ int remocon_format_analyze(char *fmt_tag, char *dst,
 			app_debug(REMOCON_FORMAT, 1,
 				  "AEHA pattern detected, but"
 				  " parity is inconsistent.\n"
-				  "%04x %01x %07x",
+				  "%04x %01x %07lx",
 				  custom, parity, cmd);
 		}
 		strcpy(fmt_tag, "AEHA");
-		sprintf(dst, "%04x %07x", custom, cmd);
+		sprintf(dst, "custom=%04x cmd=%07lx", custom, cmd);
 		return 0;
 	}
 
@@ -818,7 +818,7 @@ int remocon_format_analyze(char *fmt_tag, char *dst,
 			return -1;
 		}
 		strcpy(fmt_tag, "NEC");
-		sprintf(dst, "%02x %02x", custom, cmd);
+		sprintf(dst, "custom=%02x cmd=%02x", custom, cmd);
 		return 0;
 	}
 
@@ -832,7 +832,7 @@ int remocon_format_analyze(char *fmt_tag, char *dst,
 		       ((unsigned short)buf[1] << 1) |
 		       (buf[0] >> 7);
 		strcpy(fmt_tag, "SONY");
-		sprintf(dst, "%02x %04x", cmd, prod);
+		sprintf(dst, "prod=%04x cmd=%02x", prod, cmd);
 		return 0;
 	}
 
@@ -844,7 +844,7 @@ int remocon_format_analyze(char *fmt_tag, char *dst,
 		id = (buf[1] >> 1) & 0x7;
 		cmd = (((unsigned short)buf[1] << 8) | buf[0]) & 0x1ff;
 		strcpy(fmt_tag, "KOIZ");
-		sprintf(dst, "%02x %04x", id, cmd);
+		sprintf(dst, "id=%02x cmd=%04x", id, cmd);
 		return 0;
 	}
 
