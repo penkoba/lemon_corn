@@ -41,6 +41,9 @@ static inline void set_bit_in_ary(unsigned char *ary, int idx)
 	ary[idx / 8] |= (1 << (idx & 0x7));
 }
 
+/*
+ * analyzer
+ */
 enum {
 	DETECTED_PATTERN_DATA0 = 1,
 	DETECTED_PATTERN_DATA1,
@@ -101,7 +104,7 @@ struct analyzer {
 	int dur_cycle;
 };
 
-static void azer_init(analyzer_t *azer)
+static void analyzer_init(analyzer_t *azer)
 {
 	azer->dst_idx = 0;
 	azer->cycle = 0;
@@ -114,8 +117,8 @@ static void azer_init(analyzer_t *azer)
 	azer->dur_cycle = azer->cycle_len_min;
 }
 
-static int azer_on_bit_detected(const analyzer_t *azer, unsigned char *dst,
-				unsigned char bit)
+static int analyzer_on_bit_detected(const analyzer_t *azer, unsigned char *dst,
+				    unsigned char bit)
 {
 	if (azer->dst_idx == azer->data_bit_len_max) {
 		app_debug(REMOCON_FORMAT, 1, "%stoo long data\n",
@@ -127,7 +130,7 @@ static int azer_on_bit_detected(const analyzer_t *azer, unsigned char *dst,
 	return 0;
 }
 
-static inline int azer_on_flipped(analyzer_t *azer)
+static inline int analyzer_on_flipped(analyzer_t *azer)
 {
 	app_debug(REMOCON_FORMAT, 3,
 		  "%-4s at %3d, dur = %4.1fms, dur_cycle = %4.1fms\n",
@@ -140,8 +143,8 @@ static inline int azer_on_flipped(analyzer_t *azer)
 		return azer->on_flip_dn(azer);
 }
 
-static int azer_on_end_cycle(const analyzer_t *azer,
-			     unsigned char *dst, const unsigned char *tmp)
+static int analyzer_on_end_cycle(const analyzer_t *azer,
+				 unsigned char *dst, const unsigned char *tmp)
 {
 	char dst_str[DATA_LEN_MAX * 2] = "";
 	char tmp_str[DATA_LEN_MAX * 2] = "";
@@ -172,7 +175,7 @@ static int azer_on_end_cycle(const analyzer_t *azer,
 	return 0;
 }
 
-static inline int azer_try_detect_trailer(const analyzer_t *azer)
+static inline int analyzer_try_detect_trailer(const analyzer_t *azer)
 {
 	if ((azer->level == 0) &&
 	    (azer->state == ANALIZER_STATE_DATA) &&
@@ -192,11 +195,11 @@ static inline int azer_try_detect_trailer(const analyzer_t *azer)
 	return 0;
 }
 
-static int azer_on_each_sample(const analyzer_t *azer)
+static int analyzer_on_each_sample(const analyzer_t *azer)
 {
 	int r;
 
-	r = azer_try_detect_trailer(azer);
+	r = analyzer_try_detect_trailer(azer);
 	if (r)
 		return r;
 	if (azer->on_each_sample)
@@ -204,6 +207,9 @@ static int azer_on_each_sample(const analyzer_t *azer)
 	return r;
 }
 
+/*
+ * forger
+ */
 typedef struct {
 	unsigned long t;	/* time in us */
 	unsigned long t_flip;
@@ -211,39 +217,39 @@ typedef struct {
 	size_t ptn_len;
 } forger_t;
 
-static void forger_init(forger_t *forger, unsigned char *ptn, size_t ptn_len)
+static void forger_init(forger_t *fger, unsigned char *ptn, size_t ptn_len)
 {
-	forger->t = 0;
-	forger->t_flip = 0;
-	forger->ptn = ptn;
-	forger->ptn_len = ptn_len;
+	fger->t = 0;
+	fger->t_flip = 0;
+	fger->ptn = ptn;
+	fger->ptn_len = ptn_len;
 	memset(ptn, 0, ptn_len);
 }
 
-static void forge_dur(forger_t *forger, int val, int dur)
+static void forge_dur(forger_t *fger, int val, int dur)
 {
-	for (forger->t_flip += dur;
-	     forger->t < forger->t_flip;
-	     forger->t += 100) {
+	for (fger->t_flip += dur;
+	     fger->t < fger->t_flip;
+	     fger->t += 100) {
 		if (val)
-			set_bit_in_ary(forger->ptn, forger->t / 100);
+			set_bit_in_ary(fger->ptn, fger->t / 100);
 	}
 }
 
-static void forge_until(forger_t *forger, int val, int until)
+static void forge_until(forger_t *fger, int val, int until)
 {
-	for (forger->t_flip = until;
-	     forger->t < forger->t_flip;
-	     forger->t += 100) {
+	for (fger->t_flip = until;
+	     fger->t < fger->t_flip;
+	     fger->t += 100) {
 		if (val)
-			set_bit_in_ary(forger->ptn, forger->t / 100);
+			set_bit_in_ary(fger->ptn, fger->t / 100);
 	}
 }
 
-static void forge_pulse(forger_t *forger, int h_len, int l_len)
+static void forge_pulse(forger_t *fger, int h_len, int l_len)
 {
-	forge_dur(forger, 1, h_len);
-	forge_dur(forger, 0, l_len);
+	forge_dur(fger, 1, h_len);
+	forge_dur(fger, 0, l_len);
 }
 
 /*
@@ -374,15 +380,15 @@ static void nec_azer_init(analyzer_t *a)
 	a->on_flip_up = nec_on_flip_up;
 	a->on_flip_dn = nec_on_flip_dn;
 	a->on_each_sample = NULL;
-	a->on_end_cycle = azer_on_end_cycle;
+	a->on_end_cycle = analyzer_on_end_cycle;
 }
 
-#define nec_forge_leader(forger) \
-	forge_pulse(forger, NEC_LEADER_H_LEN_TYP, NEC_LEADER_L_LEN_TYP)
-#define nec_forge_data0(forger) \
-	forge_pulse(forger, NEC_DATA_H_LEN_TYP, NEC_DATA0_L_LEN_TYP)
-#define nec_forge_data1(forger) \
-	forge_pulse(forger, NEC_DATA_H_LEN_TYP, NEC_DATA1_L_LEN_TYP)
+#define nec_forge_leader(fger) \
+	forge_pulse(fger, NEC_LEADER_H_LEN_TYP, NEC_LEADER_L_LEN_TYP)
+#define nec_forge_data0(fger) \
+	forge_pulse(fger, NEC_DATA_H_LEN_TYP, NEC_DATA0_L_LEN_TYP)
+#define nec_forge_data1(fger) \
+	forge_pulse(fger, NEC_DATA_H_LEN_TYP, NEC_DATA1_L_LEN_TYP)
 
 int remocon_format_forge_nec(unsigned char *ptn, size_t sz,
 			     unsigned short custom, unsigned char cmd)
@@ -392,44 +398,44 @@ int remocon_format_forge_nec(unsigned char *ptn, size_t sz,
 		(unsigned char)(custom & 0xff)
 	};
 	int idx;
-	forger_t forger;
+	forger_t fger;
 	unsigned long t_start;
 	int i;
 
-	forger_init(&forger, ptn, sz);
+	forger_init(&fger, ptn, sz);
 
-	t_start = forger.t;
+	t_start = fger.t;
 
 	/* leader */
-	nec_forge_leader(&forger);
+	nec_forge_leader(&fger);
 	/* custom */
 	for (idx = 0; idx < 16; idx++) {
 		if (get_bit_in_ary(custom_char, idx))
-			nec_forge_data1(&forger);
+			nec_forge_data1(&fger);
 		else
-			nec_forge_data0(&forger);
+			nec_forge_data0(&fger);
 	}
 	/* cmd */
 	for (idx = 0; idx < 8; idx++) {
 		if (get_bit_in_ary(&cmd, idx))
-			nec_forge_data1(&forger);
+			nec_forge_data1(&fger);
 		else
-			nec_forge_data0(&forger);
+			nec_forge_data0(&fger);
 	}
 	cmd = ~cmd;
 	for (idx = 0; idx < 8; idx++) {
 		if (get_bit_in_ary(&cmd, idx))
-			nec_forge_data1(&forger);
+			nec_forge_data1(&fger);
 		else
-			nec_forge_data0(&forger);
+			nec_forge_data0(&fger);
 	}
 	/* stop bit */
-	forge_dur(&forger, 1, NEC_DATA_H_LEN_TYP);
+	forge_dur(&fger, 1, NEC_DATA_H_LEN_TYP);
 	/* trailer */
-	forge_until(&forger, 0, t_start + NEC_CYCLE_LEN_TYP);
+	forge_until(&fger, 0, t_start + NEC_CYCLE_LEN_TYP);
 	/* repeat */
-	forge_pulse(&forger, NEC_REPEATER_H_LEN_TYP, NEC_REPEATER_L_LEN_TYP);
-	forge_dur(&forger, 1, NEC_DATA_H_LEN_TYP);
+	forge_pulse(&fger, NEC_REPEATER_H_LEN_TYP, NEC_REPEATER_L_LEN_TYP);
+	forge_dur(&fger, 1, NEC_DATA_H_LEN_TYP);
 
 	for (i = 0; i < sz; i++) {
 		printf("%02x", ptn[i]);
@@ -541,15 +547,15 @@ static void aeha_azer_init(analyzer_t *a)
 	a->on_flip_up = aeha_on_flip_up;
 	a->on_flip_dn = aeha_on_flip_dn;
 	a->on_each_sample = NULL;
-	a->on_end_cycle = azer_on_end_cycle;
+	a->on_end_cycle = analyzer_on_end_cycle;
 }
 
-#define aeha_forge_leader(forger) \
-	forge_pulse(forger, AEHA_LEADER_H_LEN_TYP, AEHA_LEADER_L_LEN_TYP)
-#define aeha_forge_data0(forger) \
-	forge_pulse(forger, AEHA_DATA_H_LEN_TYP, AEHA_DATA0_L_LEN_TYP)
-#define aeha_forge_data1(forger) \
-	forge_pulse(forger, AEHA_DATA_H_LEN_TYP, AEHA_DATA1_L_LEN_TYP)
+#define aeha_forge_leader(fger) \
+	forge_pulse(fger, AEHA_LEADER_H_LEN_TYP, AEHA_LEADER_L_LEN_TYP)
+#define aeha_forge_data0(fger) \
+	forge_pulse(fger, AEHA_DATA_H_LEN_TYP, AEHA_DATA0_L_LEN_TYP)
+#define aeha_forge_data1(fger) \
+	forge_pulse(fger, AEHA_DATA_H_LEN_TYP, AEHA_DATA1_L_LEN_TYP)
 
 int remocon_format_forge_aeha(unsigned char *ptn, size_t sz,
 			      unsigned long custom, unsigned long cmd)
@@ -570,39 +576,39 @@ int remocon_format_forge_aeha(unsigned char *ptn, size_t sz,
 	};
 	int idx;
 	int repeat;
-	forger_t forger;
+	forger_t fger;
 	int i;
 
-	forger_init(&forger, ptn, sz);
+	forger_init(&fger, ptn, sz);
 
 	for (repeat = 0; repeat < 2; repeat++) {
 		/* leader */
-		aeha_forge_leader(&forger);
+		aeha_forge_leader(&fger);
 		/* custom */
 		for (idx = 0; idx < 16; idx++) {
 			if (get_bit_in_ary(custom_char, idx))
-				aeha_forge_data1(&forger);
+				aeha_forge_data1(&fger);
 			else
-				aeha_forge_data0(&forger);
+				aeha_forge_data0(&fger);
 		}
 		/* parity */
 		for (idx = 0; idx < 4; idx++) {
 			if (get_bit_in_ary(&custom_parity, idx))
-				aeha_forge_data1(&forger);
+				aeha_forge_data1(&fger);
 			else
-				aeha_forge_data0(&forger);
+				aeha_forge_data0(&fger);
 		}
 		/* cmd */
 		for (idx = 0; idx < 28; idx++) {
 			if (get_bit_in_ary(cmd_char, idx))
-				aeha_forge_data1(&forger);
+				aeha_forge_data1(&fger);
 			else
-				aeha_forge_data0(&forger);
+				aeha_forge_data0(&fger);
 		}
 		/* stop bit */
-		forge_dur(&forger, 1, AEHA_DATA_H_LEN_TYP);
+		forge_dur(&fger, 1, AEHA_DATA_H_LEN_TYP);
 		/* trailer */
-		forge_dur(&forger, 0, AEHA_TRAILER_L_LEN_TYP);
+		forge_dur(&fger, 0, AEHA_TRAILER_L_LEN_TYP);
 	}
 
 	for (i = 0; i < sz; i++) {
@@ -729,15 +735,15 @@ static void sony_azer_init(analyzer_t *a)
 	a->on_flip_up = sony_on_flip_up;
 	a->on_flip_dn = sony_on_flip_dn;
 	a->on_each_sample = sony_on_each_sample;
-	a->on_end_cycle = azer_on_end_cycle;
+	a->on_end_cycle = analyzer_on_end_cycle;
 };
 
-#define sony_forge_leader(forger) \
-	forge_pulse(forger, SONY_LEADER_H_LEN_TYP, SONY_LEADER_L_LEN_TYP)
-#define sony_forge_data0(forger) \
-	forge_pulse(forger, SONY_DATA0_H_LEN_TYP, SONY_DATA_L_LEN_TYP)
-#define sony_forge_data1(forger) \
-	forge_pulse(forger, SONY_DATA1_H_LEN_TYP, SONY_DATA_L_LEN_TYP)
+#define sony_forge_leader(fger) \
+	forge_pulse(fger, SONY_LEADER_H_LEN_TYP, SONY_LEADER_L_LEN_TYP)
+#define sony_forge_data0(fger) \
+	forge_pulse(fger, SONY_DATA0_H_LEN_TYP, SONY_DATA_L_LEN_TYP)
+#define sony_forge_data1(fger) \
+	forge_pulse(fger, SONY_DATA1_H_LEN_TYP, SONY_DATA_L_LEN_TYP)
 
 int remocon_format_forge_sony(unsigned char *ptn, size_t sz,
 			      unsigned long prod, unsigned long cmd)
@@ -746,7 +752,7 @@ int remocon_format_forge_sony(unsigned char *ptn, size_t sz,
 	int data_bit_len;
 	int idx;
 	int repeat;
-	forger_t forger;
+	forger_t fger;
 	int i;
 
 	cmd_concat[0] = ((prod & 0x0001) << 7) | cmd;
@@ -756,22 +762,22 @@ int remocon_format_forge_sony(unsigned char *ptn, size_t sz,
 	data_bit_len = (prod & 0x1e00) ? 20 :
 		       (prod & 0x00e0) ? 15 : 12;
 
-	forger_init(&forger, ptn, sz);
+	forger_init(&fger, ptn, sz);
 
 	for (repeat = 0; repeat < 3; repeat++) {
-		unsigned long t_start = forger.t;
+		unsigned long t_start = fger.t;
 
 		/* leader */
-		sony_forge_leader(&forger);
+		sony_forge_leader(&fger);
 		/* data */
 		for (idx = 0; idx < data_bit_len; idx++) {
 			if (get_bit_in_ary(cmd_concat, idx))
-				sony_forge_data1(&forger);
+				sony_forge_data1(&fger);
 			else
-				sony_forge_data0(&forger);
+				sony_forge_data0(&fger);
 		}
 		/* trailer */
-		forge_until(&forger, 0, t_start + SONY_CYCLE_LEN_TYP);
+		forge_until(&fger, 0, t_start + SONY_CYCLE_LEN_TYP);
 	}
 
 	for (i = 0; i < sz; i++) {
@@ -969,7 +975,7 @@ static int analyze(analyzer_t *azer, unsigned char *dst,
 	size_t sz_bit = sz * 8;
 	int r;
 
-	azer_init(azer);
+	analyzer_init(azer);
 	for (azer->src_idx = 0; azer->src_idx < sz_bit; azer->src_idx++) {
 		char this_bit = get_bit_in_ary(ptn, azer->src_idx);
 
@@ -980,7 +986,7 @@ static int analyze(analyzer_t *azer, unsigned char *dst,
 		if (this_bit == azer->level) {
 			azer->dur += 100;
 		} else {
-			r = azer_on_flipped(azer);
+			r = analyzer_on_flipped(azer);
 			if (r < 0)
 				return -1;
 			else if (r == DETECTED_PATTERN_LEADER) {
@@ -998,8 +1004,8 @@ static int analyze(analyzer_t *azer, unsigned char *dst,
 				azer->state = ANALIZER_STATE_TRAILER;
 			} else if (r > 0) {	/* data */
 				int dat = (r == DETECTED_PATTERN_DATA1) ? 1 : 0;
-				if (azer_on_bit_detected(azer, dst_tmp,
-							 dat) < 0)
+				if (analyzer_on_bit_detected(azer, dst_tmp,
+							     dat) < 0)
 					return -1;
 				azer->dst_idx++;
 			}
@@ -1009,7 +1015,7 @@ static int analyze(analyzer_t *azer, unsigned char *dst,
 			azer->dur = 100;
 		}
 
-		r = azer_on_each_sample(azer);
+		r = analyzer_on_each_sample(azer);
 		if (r < 0)
 			return -1;
 		else if (r == DETECTED_PATTERN_LEADER) {
@@ -1025,7 +1031,7 @@ static int analyze(analyzer_t *azer, unsigned char *dst,
 			/* nothing to do */
 		} else if (r > 0) {	/* data */
 			int dat = (r == DETECTED_PATTERN_DATA1) ? 1 : 0;
-			if (azer_on_bit_detected(azer, dst_tmp, dat) < 0)
+			if (analyzer_on_bit_detected(azer, dst_tmp, dat) < 0)
 				return -1;
 			azer->dst_idx++;
 		}
