@@ -130,9 +130,9 @@ static int azer_on_bit_detected(const analyzer_t *azer, unsigned char *dst,
 static inline int azer_on_flipped(analyzer_t *azer)
 {
 	app_debug(REMOCON_FORMAT, 3,
-		  "%-4s at %3d, dur = %3d, dur_cycle = %3d\n",
+		  "%-4s at %3d, dur = %4.1fms, dur_cycle = %4.1fms\n",
 		  (azer->level == 1) ? "HIGH" : "LOW", azer->src_idx,
-		  azer->dur, azer->dur_cycle);
+		  azer->dur / 1000.0, azer->dur_cycle / 1000.0);
 
 	if (azer->level == 0)
 		return azer->on_flip_up(azer);
@@ -292,14 +292,14 @@ static void forge_pulse(forger_t *forger, int h_len, int l_len)
 #define NEC_REPEATER_L_LEN_TYP	  2250
 #define NEC_REPEATER_L_LEN_MAX	  2400
 
-const int nec_data_h_len_min     = NEC_DATA_H_LEN_MIN / 100;
-const int nec_data_h_len_max     = NEC_DATA_H_LEN_MAX / 100;
-const int nec_data0_l_len_min    = NEC_DATA0_L_LEN_MIN / 100;
-const int nec_data0_l_len_max    = NEC_DATA0_L_LEN_MAX / 100;
-const int nec_data1_l_len_min    = NEC_DATA1_L_LEN_MIN / 100;
-const int nec_data1_l_len_max    = NEC_DATA1_L_LEN_MAX / 100;
-const int nec_repeater_l_len_min = NEC_REPEATER_L_LEN_MIN / 100;
-const int nec_repeater_l_len_max = NEC_REPEATER_L_LEN_MAX / 100;
+const int nec_data_h_len_min     = NEC_DATA_H_LEN_MIN;
+const int nec_data_h_len_max     = NEC_DATA_H_LEN_MAX;
+const int nec_data0_l_len_min    = NEC_DATA0_L_LEN_MIN;
+const int nec_data0_l_len_max    = NEC_DATA0_L_LEN_MAX;
+const int nec_data1_l_len_min    = NEC_DATA1_L_LEN_MIN;
+const int nec_data1_l_len_max    = NEC_DATA1_L_LEN_MAX;
+const int nec_repeater_l_len_min = NEC_REPEATER_L_LEN_MIN;
+const int nec_repeater_l_len_max = NEC_REPEATER_L_LEN_MAX;
 
 static int nec_on_flip_up(const analyzer_t *azer)
 {
@@ -334,8 +334,8 @@ static int nec_on_flip_up(const analyzer_t *azer)
 	}
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched LOW duration (%d) at %d (state = %d)\n",
-		  azer->msg_head, azer->dur, azer->src_idx, azer->state);
+		  "%sunmatched LOW duration (%4.1fms) at %d (state = %d)\n",
+		  azer->msg_head, azer->dur / 1000.0, azer->src_idx, azer->state);
 	return -1;
 }
 
@@ -360,8 +360,9 @@ static int nec_on_flip_dn(const analyzer_t *azer)
 	}
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched HIGH duration (%d) at %d (state = %d)\n",
-		   azer->msg_head, azer->dur, azer->src_idx, azer->state);
+		  "%sunmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
+		   azer->msg_head, azer->dur / 1000.0,
+		   azer->src_idx, azer->state);
 	return -1;
 }
 
@@ -371,14 +372,14 @@ static void nec_azer_init(analyzer_t *a)
 	a->data_bit_len_min = 32;
 	a->data_bit_len_max = 32;
 	a->data_len = 4;
-	a->leader_h_len_min  = NEC_LEADER_H_LEN_MIN / 100;
-	a->leader_h_len_max  = NEC_LEADER_H_LEN_MAX / 100;
-	a->leader_l_len_min  = NEC_LEADER_L_LEN_MIN / 100;
-	a->leader_l_len_max  = NEC_LEADER_L_LEN_MAX / 100;
-	a->trailer_l_len_min = NEC_TRAILER_L_LEN_MIN / 100;
-	a->trailer_l_len_max = NEC_TRAILER_L_LEN_MAX / 100;
-	a->cycle_len_min     = NEC_CYCLE_LEN_MIN / 100;
-	a->cycle_len_max     = NEC_CYCLE_LEN_MAX / 100;
+	a->leader_h_len_min  = NEC_LEADER_H_LEN_MIN;
+	a->leader_h_len_max  = NEC_LEADER_H_LEN_MAX;
+	a->leader_l_len_min  = NEC_LEADER_L_LEN_MIN;
+	a->leader_l_len_max  = NEC_LEADER_L_LEN_MAX;
+	a->trailer_l_len_min = NEC_TRAILER_L_LEN_MIN;
+	a->trailer_l_len_max = NEC_TRAILER_L_LEN_MAX;
+	a->cycle_len_min     = NEC_CYCLE_LEN_MIN;
+	a->cycle_len_max     = NEC_CYCLE_LEN_MAX;
 	a->on_flip_up = nec_on_flip_up;
 	a->on_flip_dn = nec_on_flip_dn;
 	a->on_each_sample = NULL;
@@ -464,10 +465,10 @@ int remocon_format_forge_nec(unsigned char *ptn, size_t sz,
 #define AEHA_LEADER_L_LEN_MIN	1500
 #define AEHA_LEADER_L_LEN_TYP	1700
 #define AEHA_LEADER_L_LEN_MAX	1900
-#define AEHA_DATA_H_LEN_MIN	 350
+#define AEHA_DATA_H_LEN_MIN	 300
 #define AEHA_DATA_H_LEN_TYP	 425
 #define AEHA_DATA_H_LEN_MAX	 500
-#define AEHA_DATA0_L_LEN_MIN	 350
+#define AEHA_DATA0_L_LEN_MIN	 300
 #define AEHA_DATA0_L_LEN_TYP	 425
 #define AEHA_DATA0_L_LEN_MAX	 500
 #define AEHA_DATA1_L_LEN_MIN	1150
@@ -480,12 +481,12 @@ int remocon_format_forge_nec(unsigned char *ptn, size_t sz,
 /* #define AEHA_CYCLE_LEN_TYP */
 #define AEHA_CYCLE_LEN_MAX	1000000	/* no condition */
 
-const int aeha_data_h_len_min  = AEHA_DATA_H_LEN_MIN / 100;
-const int aeha_data_h_len_max  = AEHA_DATA_H_LEN_MAX / 100;
-const int aeha_data0_l_len_min = AEHA_DATA0_L_LEN_MIN / 100;
-const int aeha_data0_l_len_max = AEHA_DATA0_L_LEN_MAX / 100;
-const int aeha_data1_l_len_min = AEHA_DATA1_L_LEN_MIN / 100;
-const int aeha_data1_l_len_max = AEHA_DATA1_L_LEN_MAX / 100;
+const int aeha_data_h_len_min  = AEHA_DATA_H_LEN_MIN;
+const int aeha_data_h_len_max  = AEHA_DATA_H_LEN_MAX;
+const int aeha_data0_l_len_min = AEHA_DATA0_L_LEN_MIN;
+const int aeha_data0_l_len_max = AEHA_DATA0_L_LEN_MAX;
+const int aeha_data1_l_len_min = AEHA_DATA1_L_LEN_MIN;
+const int aeha_data1_l_len_max = AEHA_DATA1_L_LEN_MAX;
 
 static int aeha_on_flip_up(const analyzer_t *azer)
 {
@@ -514,8 +515,9 @@ static int aeha_on_flip_up(const analyzer_t *azer)
 	}
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched LOW duration (%d) at %d (state = %d)\n",
-		  azer->msg_head, azer->dur, azer->src_idx, azer->state);
+		  "%sunmatched LOW duration (%4.1fms) at %d (state = %d)\n",
+		  azer->msg_head, azer->dur / 1000.0,
+		  azer->src_idx, azer->state);
 	return -1;
 }
 
@@ -532,8 +534,9 @@ static int aeha_on_flip_dn(const analyzer_t *azer)
 	}
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched HIGH duration (%d) at %d (state = %d)\n",
-		   azer->msg_head, azer->dur, azer->src_idx, azer->state);
+		  "%sunmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
+		   azer->msg_head, azer->dur / 1000.0,
+		   azer->src_idx, azer->state);
 	return -1;
 }
 
@@ -543,14 +546,14 @@ static void aeha_azer_init(analyzer_t *a)
 	a->data_bit_len_min = 48;	/* SHARP dvd, Panasonic STB */
 	a->data_bit_len_max = 48;
 	a->data_len = 6;
-	a->leader_h_len_min  = AEHA_LEADER_H_LEN_MIN / 100;
-	a->leader_h_len_max  = AEHA_LEADER_H_LEN_MAX / 100;
-	a->leader_l_len_min  = AEHA_LEADER_L_LEN_MIN / 100;
-	a->leader_l_len_max  = AEHA_LEADER_L_LEN_MAX / 100;
-	a->trailer_l_len_min = AEHA_TRAILER_L_LEN_MIN / 100;
-	a->trailer_l_len_max = AEHA_TRAILER_L_LEN_MAX / 100;
-	a->cycle_len_min     = AEHA_CYCLE_LEN_MIN / 100;
-	a->cycle_len_max     = AEHA_CYCLE_LEN_MAX / 100;
+	a->leader_h_len_min  = AEHA_LEADER_H_LEN_MIN;
+	a->leader_h_len_max  = AEHA_LEADER_H_LEN_MAX;
+	a->leader_l_len_min  = AEHA_LEADER_L_LEN_MIN;
+	a->leader_l_len_max  = AEHA_LEADER_L_LEN_MAX;
+	a->trailer_l_len_min = AEHA_TRAILER_L_LEN_MIN;
+	a->trailer_l_len_max = AEHA_TRAILER_L_LEN_MAX;
+	a->cycle_len_min     = AEHA_CYCLE_LEN_MIN;
+	a->cycle_len_max     = AEHA_CYCLE_LEN_MAX;
 	a->on_flip_up = aeha_on_flip_up;
 	a->on_flip_dn = aeha_on_flip_dn;
 	a->on_each_sample = NULL;
@@ -659,12 +662,12 @@ int remocon_format_forge_aeha(unsigned char *ptn, size_t sz,
 #define SONY_CYCLE_LEN_TYP	45000
 #define SONY_CYCLE_LEN_MAX	50000
 
-const int sony_data0_h_len_min = SONY_DATA0_H_LEN_MIN / 100;
-const int sony_data0_h_len_max = SONY_DATA0_H_LEN_MAX / 100;
-const int sony_data1_h_len_min = SONY_DATA1_H_LEN_MIN / 100;
-const int sony_data1_h_len_max = SONY_DATA1_H_LEN_MAX / 100;
-const int sony_data_l_len_min  = SONY_DATA_L_LEN_MIN / 100;
-const int sony_data_l_len_max  = SONY_DATA_L_LEN_MAX / 100;
+const int sony_data0_h_len_min = SONY_DATA0_H_LEN_MIN;
+const int sony_data0_h_len_max = SONY_DATA0_H_LEN_MAX;
+const int sony_data1_h_len_min = SONY_DATA1_H_LEN_MIN;
+const int sony_data1_h_len_max = SONY_DATA1_H_LEN_MAX;
+const int sony_data_l_len_min  = SONY_DATA_L_LEN_MIN;
+const int sony_data_l_len_max  = SONY_DATA_L_LEN_MAX;
 
 static int sony_on_flip_up(const analyzer_t *azer)
 {
@@ -678,8 +681,9 @@ static int sony_on_flip_up(const analyzer_t *azer)
 		return DETECTED_PATTERN_TRAILER;
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched LOW duration (%d) at %d (state = %d)\n",
-		  azer->msg_head, azer->dur, azer->src_idx, azer->state);
+		  "%sunmatched LOW duration (%4.1fms) at %d (state = %d)\n",
+		  azer->msg_head, azer->dur / 1000.0,
+		  azer->src_idx, azer->state);
 	return -1;
 }
 
@@ -693,8 +697,9 @@ static int sony_on_flip_dn(const analyzer_t *azer)
 		return 0;
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched HIGH duration (%d) at %d (state = %d)\n",
-		   azer->msg_head, azer->dur, azer->src_idx, azer->state);
+		  "%sunmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
+		   azer->msg_head, azer->dur / 1000.0,
+		   azer->src_idx, azer->state);
 	return -1;
 }
 
@@ -724,9 +729,9 @@ static int sony_on_each_sample(const analyzer_t *azer)
 		return 0;
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched HIGH duration (%d) at %d (state = %d)\n",
-		  azer->msg_head, azer->dur_prev,
-		  azer->src_idx - azer->dur, azer->state);
+		  "%sunmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
+		  azer->msg_head, azer->dur_prev / 1000.0,
+		  azer->src_idx - azer->dur / 100, azer->state);
 	return -1;
 }
 
@@ -736,14 +741,14 @@ static void sony_azer_init(analyzer_t *a)
 	a->data_bit_len_min = 12;	/* 12, 15, 20 bits */
 	a->data_bit_len_max = 20;
 	a->data_len = 3;
-	a->leader_h_len_min  = SONY_LEADER_H_LEN_MIN / 100;
-	a->leader_h_len_max  = SONY_LEADER_H_LEN_MAX / 100;
-	a->leader_l_len_min  = SONY_LEADER_L_LEN_MIN / 100;
-	a->leader_l_len_max  = SONY_LEADER_L_LEN_MAX / 100;
-	a->trailer_l_len_min = SONY_TRAILER_L_LEN_MIN / 100;
-	a->trailer_l_len_max = SONY_TRAILER_L_LEN_MAX / 100;
-	a->cycle_len_min     = SONY_CYCLE_LEN_MIN / 100;
-	a->cycle_len_max     = SONY_CYCLE_LEN_MAX / 100;
+	a->leader_h_len_min  = SONY_LEADER_H_LEN_MIN;
+	a->leader_h_len_max  = SONY_LEADER_H_LEN_MAX;
+	a->leader_l_len_min  = SONY_LEADER_L_LEN_MIN;
+	a->leader_l_len_max  = SONY_LEADER_L_LEN_MAX;
+	a->trailer_l_len_min = SONY_TRAILER_L_LEN_MIN;
+	a->trailer_l_len_max = SONY_TRAILER_L_LEN_MAX;
+	a->cycle_len_min     = SONY_CYCLE_LEN_MIN;
+	a->cycle_len_max     = SONY_CYCLE_LEN_MAX;
 	a->on_flip_up = sony_on_flip_up;
 	a->on_flip_dn = sony_on_flip_dn;
 	a->on_each_sample = sony_on_each_sample;
@@ -830,16 +835,16 @@ int remocon_format_forge_sony(unsigned char *ptn, size_t sz,
 #define KOIZ_MARKER_BIT_POS1	9
 #define KOIZ_MARKER_BIT_POS2	12
 
-const int koiz_data0_l_len_min  = KOIZ_DATA0_L_LEN_MIN / 100;
-const int koiz_data0_l_len_max  = KOIZ_DATA0_L_LEN_MAX / 100;
-const int koiz_data0_h_len_min  = KOIZ_DATA0_H_LEN_MIN / 100;
-const int koiz_data0_h_len_max  = KOIZ_DATA0_H_LEN_MAX / 100;
-const int koiz_data1_l_len_min  = KOIZ_DATA1_L_LEN_MIN / 100;
-const int koiz_data1_l_len_max  = KOIZ_DATA1_L_LEN_MAX / 100;
-const int koiz_data1_h_len_min  = KOIZ_DATA1_H_LEN_MIN / 100;
-const int koiz_data1_h_len_max  = KOIZ_DATA1_H_LEN_MAX / 100;
-const int koiz_marker_l_len_min = KOIZ_MARKER_L_LEN_MIN / 100;
-const int koiz_marker_l_len_max = KOIZ_MARKER_L_LEN_MAX / 100;
+const int koiz_data0_l_len_min  = KOIZ_DATA0_L_LEN_MIN;
+const int koiz_data0_l_len_max  = KOIZ_DATA0_L_LEN_MAX;
+const int koiz_data0_h_len_min  = KOIZ_DATA0_H_LEN_MIN;
+const int koiz_data0_h_len_max  = KOIZ_DATA0_H_LEN_MAX;
+const int koiz_data1_l_len_min  = KOIZ_DATA1_L_LEN_MIN;
+const int koiz_data1_l_len_max  = KOIZ_DATA1_L_LEN_MAX;
+const int koiz_data1_h_len_min  = KOIZ_DATA1_H_LEN_MIN;
+const int koiz_data1_h_len_max  = KOIZ_DATA1_H_LEN_MAX;
+const int koiz_marker_l_len_min = KOIZ_MARKER_L_LEN_MIN;
+const int koiz_marker_l_len_max = KOIZ_MARKER_L_LEN_MAX;
 
 static int koiz_on_flip_up(const analyzer_t *azer)
 {
@@ -890,9 +895,9 @@ static int koiz_on_flip_dn(const analyzer_t *azer)
 		return 0;
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched pattern: LOW duration (%d) / HIGH duration (%d)"
+		  "%sunmatched pattern: LOW duration (%4.1fms) / HIGH duration (%4.1fms)"
 		  " at %d (state = %d)\n",
-		   azer->msg_head, azer->dur_prev, azer->dur,
+		   azer->msg_head, azer->dur_prev / 1000.0, azer->dur / 1000.0,
 		   azer->src_idx, azer->state);
 	return -1;
 }
@@ -909,9 +914,9 @@ static int koiz_on_each_sample(const analyzer_t *azer)
 		return 0;
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched HIGH duration (%d) at %d (state = %d)\n",
-		  azer->msg_head, azer->dur_prev,
-		  azer->src_idx - azer->dur, azer->state);
+		  "%sunmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
+		  azer->msg_head, azer->dur_prev / 1000.0,
+		  azer->src_idx - azer->dur / 100, azer->state);
 	return -1;
 }
 
@@ -973,15 +978,15 @@ static void koiz_azer_init(analyzer_t *a)
 	a->data_bit_len_min = 9;	/* 9 or 9 + 3 + 9 */
 	a->data_bit_len_max = 21;
 	a->data_len = 3;
-	a->leader_h_len_min = 700 / 100;	/* typ = 8.3 */
-	a->leader_h_len_max = 1000 / 100;
-	a->leader_l_len_min = 700 / 100;	/* typ = 8.3 or 16.7 */
-	a->leader_l_len_max = 1900 / 100;
+	a->leader_h_len_min = 700;	/* typ = 8.3 */
+	a->leader_h_len_max = 1000;
+	a->leader_l_len_min = 700;	/* typ = 8.3 or 16.7 */
+	a->leader_l_len_max = 1900;
 
-	a->trailer_l_len_min = 11900 / 100;	/* typ = 132 */
-	a->trailer_l_len_max = 14500 / 100;
-	a->cycle_len_min = 0 / 100;		/* no condition */
-	a->cycle_len_max = 1000000 / 100;	/* no condition */
+	a->trailer_l_len_min = 11900;	/* typ = 132 */
+	a->trailer_l_len_max = 14500;
+	a->cycle_len_min = 0;		/* no condition */
+	a->cycle_len_max = 1000000;	/* no condition */
 	a->on_flip_up = koiz_on_flip_up;
 	a->on_flip_dn = koiz_on_flip_dn;
 	a->on_each_sample = koiz_on_each_sample;
@@ -1004,10 +1009,10 @@ static int analyze(analyzer_t *azer, unsigned char *dst,
 
 		if ((azer->state == ANALIZER_STATE_DATA) ||
 		    (azer->state == ANALIZER_STATE_TRAILER))
-			azer->dur_cycle++;
+			azer->dur_cycle += 100;
 
 		if (this_bit == azer->level) {
-			azer->dur++;
+			azer->dur += 100;
 		} else {
 			r = azer_on_flipped(azer);
 			if (r < 0)
@@ -1018,7 +1023,7 @@ static int analyze(analyzer_t *azer, unsigned char *dst,
 				azer->dur_cycle = azer->dur_prev + azer->dur;
 			} else if (r == DETECTED_PATTERN_TRAILER) {
 				azer->state = ANALIZER_STATE_LEADER;
-				azer->dur_cycle = 1;
+				azer->dur_cycle = 100;
 			} else if (r == DETECTED_PATTERN_MARKER) {
 				/* nothing to do */
 			} else if (r == DETECTED_PATTERN_REPEATER_L) {
@@ -1035,7 +1040,7 @@ static int analyze(analyzer_t *azer, unsigned char *dst,
 
 			azer->level = this_bit;
 			azer->dur_prev = azer->dur;
-			azer->dur = 1;
+			azer->dur = 100;
 		}
 
 		r = azer_on_each_sample(azer);
@@ -1044,8 +1049,7 @@ static int analyze(analyzer_t *azer, unsigned char *dst,
 		else if (r == DETECTED_PATTERN_LEADER) {
 			azer->state = ANALIZER_STATE_DATA;
 			azer->dst_idx = 0;
-			azer->dur_cycle =
-				azer->dur_prev + azer->dur;
+			azer->dur_cycle = azer->dur_prev + azer->dur;
 		} else if (r == DETECTED_PATTERN_TRAILER) {
 			if (azer->on_end_cycle(azer, dst, dst_tmp) < 0)
 				return -1;
