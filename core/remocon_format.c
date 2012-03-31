@@ -292,15 +292,6 @@ static void forge_pulse(forger_t *forger, int h_len, int l_len)
 #define NEC_REPEATER_L_LEN_TYP	  2250
 #define NEC_REPEATER_L_LEN_MAX	  2400
 
-const int nec_data_h_len_min     = NEC_DATA_H_LEN_MIN;
-const int nec_data_h_len_max     = NEC_DATA_H_LEN_MAX;
-const int nec_data0_l_len_min    = NEC_DATA0_L_LEN_MIN;
-const int nec_data0_l_len_max    = NEC_DATA0_L_LEN_MAX;
-const int nec_data1_l_len_min    = NEC_DATA1_L_LEN_MIN;
-const int nec_data1_l_len_max    = NEC_DATA1_L_LEN_MAX;
-const int nec_repeater_l_len_min = NEC_REPEATER_L_LEN_MIN;
-const int nec_repeater_l_len_max = NEC_REPEATER_L_LEN_MAX;
-
 static int nec_on_flip_up(const analyzer_t *azer)
 {
 	if (azer->state == ANALIZER_STATE_LEADER) {
@@ -313,18 +304,18 @@ static int nec_on_flip_up(const analyzer_t *azer)
 				return DETECTED_PATTERN_LEADER;
 			}
 		} else {	/* expect repeat signal */
-			if ((azer->dur >= nec_repeater_l_len_min) &&
-			    (azer->dur <= nec_repeater_l_len_max))
+			if ((azer->dur >= NEC_REPEATER_L_LEN_MIN) &&
+			    (azer->dur <= NEC_REPEATER_L_LEN_MAX))
 				return DETECTED_PATTERN_REPEATER_L;
 		}
 	} else if (azer->state == ANALIZER_STATE_DATA) {
-		if ((azer->dur >= nec_data0_l_len_min) &&
-		    (azer->dur <= nec_data0_l_len_max)) {
+		if ((azer->dur >= NEC_DATA0_L_LEN_MIN) &&
+		    (azer->dur <= NEC_DATA0_L_LEN_MAX)) {
 			app_debug(REMOCON_FORMAT, 2, "%sdata0 at %d\n",
 				  azer->msg_head, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
-		} else if ((azer->dur >= nec_data1_l_len_min) &&
-			   (azer->dur <= nec_data1_l_len_max)) {
+		} else if ((azer->dur >= NEC_DATA1_L_LEN_MIN) &&
+			   (azer->dur <= NEC_DATA1_L_LEN_MAX)) {
 			app_debug(REMOCON_FORMAT, 2, "%sdata1 at %d\n",
 				  azer->msg_head, azer->src_idx);
 			return DETECTED_PATTERN_DATA1;
@@ -346,16 +337,16 @@ static int nec_on_flip_dn(const analyzer_t *azer)
 		    (azer->dur <= azer->leader_h_len_max))
 			return 0;
 	} else if (azer->state == ANALIZER_STATE_REPEATER) {
-		if ((azer->dur >= nec_data_h_len_min) &&
-		    (azer->dur <= nec_data_h_len_max)) {
+		if ((azer->dur >= NEC_DATA_H_LEN_MIN) &&
+		    (azer->dur <= NEC_DATA_H_LEN_MAX)) {
 			app_debug(REMOCON_FORMAT, 2,
 				  "%srepeater detected at %d\n",
 				  azer->msg_head, azer->src_idx);
 			return DETECTED_PATTERN_REPEATER_H;
 		}
 	} else if (azer->state == ANALIZER_STATE_DATA) {
-		if ((azer->dur >= nec_data_h_len_min) &&
-		    (azer->dur <= nec_data_h_len_max))
+		if ((azer->dur >= NEC_DATA_H_LEN_MIN) &&
+		    (azer->dur <= NEC_DATA_H_LEN_MAX))
 			return 0;
 	}
 
@@ -481,13 +472,6 @@ int remocon_format_forge_nec(unsigned char *ptn, size_t sz,
 /* #define AEHA_CYCLE_LEN_TYP */
 #define AEHA_CYCLE_LEN_MAX	1000000	/* no condition */
 
-const int aeha_data_h_len_min  = AEHA_DATA_H_LEN_MIN;
-const int aeha_data_h_len_max  = AEHA_DATA_H_LEN_MAX;
-const int aeha_data0_l_len_min = AEHA_DATA0_L_LEN_MIN;
-const int aeha_data0_l_len_max = AEHA_DATA0_L_LEN_MAX;
-const int aeha_data1_l_len_min = AEHA_DATA1_L_LEN_MIN;
-const int aeha_data1_l_len_max = AEHA_DATA1_L_LEN_MAX;
-
 static int aeha_on_flip_up(const analyzer_t *azer)
 {
 	if (azer->state == ANALIZER_STATE_LEADER) {
@@ -499,13 +483,13 @@ static int aeha_on_flip_up(const analyzer_t *azer)
 			return DETECTED_PATTERN_LEADER;
 		}
 	} else if (azer->state == ANALIZER_STATE_DATA) {
-		if ((azer->dur >= aeha_data0_l_len_min) &&
-		    (azer->dur <= aeha_data0_l_len_max)) {
+		if ((azer->dur >= AEHA_DATA0_L_LEN_MIN) &&
+		    (azer->dur <= AEHA_DATA0_L_LEN_MAX)) {
 			app_debug(REMOCON_FORMAT, 2, "%sdata0 at %d\n",
 				  azer->msg_head, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
-		} else if ((azer->dur >= aeha_data1_l_len_min) &&
-			   (azer->dur <= aeha_data1_l_len_max)) {
+		} else if ((azer->dur >= AEHA_DATA1_L_LEN_MIN) &&
+			   (azer->dur <= AEHA_DATA1_L_LEN_MAX)) {
 			app_debug(REMOCON_FORMAT, 2, "%sdata1 at %d\n",
 				  azer->msg_head, azer->src_idx);
 			return DETECTED_PATTERN_DATA1;
@@ -528,8 +512,8 @@ static int aeha_on_flip_dn(const analyzer_t *azer)
 		    (azer->dur <= azer->leader_h_len_max))
 			return 0;
 	} else if (azer->state == ANALIZER_STATE_DATA) {
-		if ((azer->dur >= aeha_data_h_len_min) &&
-		    (azer->dur <= aeha_data_h_len_max))
+		if ((azer->dur >= AEHA_DATA_H_LEN_MIN) &&
+		    (azer->dur <= AEHA_DATA_H_LEN_MAX))
 			return 0;
 	}
 
@@ -662,20 +646,13 @@ int remocon_format_forge_aeha(unsigned char *ptn, size_t sz,
 #define SONY_CYCLE_LEN_TYP	45000
 #define SONY_CYCLE_LEN_MAX	50000
 
-const int sony_data0_h_len_min = SONY_DATA0_H_LEN_MIN;
-const int sony_data0_h_len_max = SONY_DATA0_H_LEN_MAX;
-const int sony_data1_h_len_min = SONY_DATA1_H_LEN_MIN;
-const int sony_data1_h_len_max = SONY_DATA1_H_LEN_MAX;
-const int sony_data_l_len_min  = SONY_DATA_L_LEN_MIN;
-const int sony_data_l_len_max  = SONY_DATA_L_LEN_MAX;
-
 static int sony_on_flip_up(const analyzer_t *azer)
 {
 	if (azer->state == ANALIZER_STATE_LEADER) {
 		/* didn't have enough 0 for leader */
 	} else if (azer->state == ANALIZER_STATE_DATA) {
-		if ((azer->dur >= sony_data_l_len_min) &&
-		    (azer->dur <= sony_data_l_len_max))
+		if ((azer->dur >= SONY_DATA_L_LEN_MIN) &&
+		    (azer->dur <= SONY_DATA_L_LEN_MAX))
 			return 0;
 	} else if (azer->state == ANALIZER_STATE_TRAILER)
 		return DETECTED_PATTERN_TRAILER;
@@ -713,14 +690,14 @@ static int sony_on_each_sample(const analyzer_t *azer)
 		return DETECTED_PATTERN_LEADER;
 	} else if ((azer->state == ANALIZER_STATE_DATA) &&
 		   (azer->level == 0) &&
-		   (azer->dur == sony_data_l_len_min)) {
-		if ((azer->dur_prev >= sony_data0_h_len_min) &&
-		    (azer->dur_prev <= sony_data0_h_len_max)) {
+		   (azer->dur == SONY_DATA_L_LEN_MIN)) {
+		if ((azer->dur_prev >= SONY_DATA0_H_LEN_MIN) &&
+		    (azer->dur_prev <= SONY_DATA0_H_LEN_MAX)) {
 			app_debug(REMOCON_FORMAT, 2, "%sdata0 at %d\n",
 				  azer->msg_head, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
-		} else if ((azer->dur_prev >= sony_data1_h_len_min) &&
-			   (azer->dur_prev <= sony_data1_h_len_max)) {
+		} else if ((azer->dur_prev >= SONY_DATA1_H_LEN_MIN) &&
+			   (azer->dur_prev <= SONY_DATA1_H_LEN_MAX)) {
 			app_debug(REMOCON_FORMAT, 2, "%sdata1 at %d\n",
 				  azer->msg_head, azer->src_idx);
 			return DETECTED_PATTERN_DATA1;
@@ -835,17 +812,6 @@ int remocon_format_forge_sony(unsigned char *ptn, size_t sz,
 #define KOIZ_MARKER_BIT_POS1	9
 #define KOIZ_MARKER_BIT_POS2	12
 
-const int koiz_data0_l_len_min  = KOIZ_DATA0_L_LEN_MIN;
-const int koiz_data0_l_len_max  = KOIZ_DATA0_L_LEN_MAX;
-const int koiz_data0_h_len_min  = KOIZ_DATA0_H_LEN_MIN;
-const int koiz_data0_h_len_max  = KOIZ_DATA0_H_LEN_MAX;
-const int koiz_data1_l_len_min  = KOIZ_DATA1_L_LEN_MIN;
-const int koiz_data1_l_len_max  = KOIZ_DATA1_L_LEN_MAX;
-const int koiz_data1_h_len_min  = KOIZ_DATA1_H_LEN_MIN;
-const int koiz_data1_h_len_max  = KOIZ_DATA1_H_LEN_MAX;
-const int koiz_marker_l_len_min = KOIZ_MARKER_L_LEN_MIN;
-const int koiz_marker_l_len_max = KOIZ_MARKER_L_LEN_MAX;
-
 static int koiz_on_flip_up(const analyzer_t *azer)
 {
 	if (azer->state == ANALIZER_STATE_TRAILER)
@@ -860,22 +826,22 @@ static int koiz_on_flip_dn(const analyzer_t *azer)
 		    (azer->dur <= azer->leader_h_len_max))
 			return 0;
 	} else if (azer->state == ANALIZER_STATE_DATA) {
-		if ((azer->dur_prev >= koiz_data0_l_len_min) &&
-		    (azer->dur_prev <= koiz_data0_l_len_max) &&
-		    (azer->dur >= koiz_data0_h_len_min) &&
-		    (azer->dur <= koiz_data0_h_len_max)) {
+		if ((azer->dur_prev >= KOIZ_DATA0_L_LEN_MIN) &&
+		    (azer->dur_prev <= KOIZ_DATA0_L_LEN_MAX) &&
+		    (azer->dur >= KOIZ_DATA0_H_LEN_MIN) &&
+		    (azer->dur <= KOIZ_DATA0_H_LEN_MAX)) {
 			app_debug(REMOCON_FORMAT, 2, "%sdata0 at %d\n",
 				  azer->msg_head, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
-		} else if ((azer->dur_prev >= koiz_data1_l_len_min) &&
-			   (azer->dur_prev <= koiz_data1_l_len_max) &&
-			   (azer->dur >= koiz_data1_h_len_min) &&
-			   (azer->dur <= koiz_data1_h_len_max)) {
+		} else if ((azer->dur_prev >= KOIZ_DATA1_L_LEN_MIN) &&
+			   (azer->dur_prev <= KOIZ_DATA1_L_LEN_MAX) &&
+			   (azer->dur >= KOIZ_DATA1_H_LEN_MIN) &&
+			   (azer->dur <= KOIZ_DATA1_H_LEN_MAX)) {
 			app_debug(REMOCON_FORMAT, 2, "%sdata1 at %d\n",
 				  azer->msg_head, azer->src_idx);
 			return DETECTED_PATTERN_DATA1;
-		} else if ((azer->dur_prev >= koiz_marker_l_len_min) &&
-			   (azer->dur_prev <= koiz_marker_l_len_max) &&
+		} else if ((azer->dur_prev >= KOIZ_MARKER_L_LEN_MIN) &&
+			   (azer->dur_prev <= KOIZ_MARKER_L_LEN_MAX) &&
 			   (azer->dur >= azer->leader_h_len_min) &&
 			   (azer->dur <= azer->leader_h_len_max)) {
 			if ((azer->dst_idx != KOIZ_MARKER_BIT_POS1) &&
