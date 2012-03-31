@@ -40,6 +40,7 @@
 #include "debug.h"
 
 #define DEFAULT_TTY_DEV		"/dev/ttyUSB0"
+#define ARDUINO_TTY_DEV		"/dev/ttyACM0"
 
 #define TAG_LEN			32
 #define CMD_MAX			50
@@ -74,6 +75,7 @@ static struct app {
 	char *forge_fmt;
 	int data_cnt;
 	int trunc_len;
+	int is_arduino;
 	int is_virtual;
 } app;
 
@@ -335,6 +337,10 @@ static void transmit_main(int fd)
 	unsigned char c;
 	unsigned char ex_ary[2];
 
+	if (app.is_arduino) {	/* need serial setup time */
+		printf("wait for arduino serial setup...\n");
+		sleep(2);
+	}
 	c = PCOPRS1_CMD_LED;
 	remocon_send(fd, &c, 1);
 	ex_ary[0] = PCOPRS1_CMD_LED_OK;
@@ -379,6 +385,10 @@ static void receive_main(int fd)
 	int r;
 	int i;
 
+	if (app.is_arduino) {	/* need serial setup time */
+		printf("wait for arduino serial setup...\n");
+		sleep(2);
+	}
 	c = PCOPRS1_CMD_LED;
 	remocon_send(fd, &c, 1);
 	ex_ary[0] = PCOPRS1_CMD_LED_OK;
@@ -598,6 +608,7 @@ static void usage(const char *cmd_path)
 "                 format: AEHA,<custom_hex>,<cmd_hex>\n"
 "                         NEC,<custom_hex>,<cmd_hex>\n"
 "                         SONY,<prod_hex>,<cmd_hex>\n"
+"        [-arduino]           (arduino mode)\n"
 "        [-virtual]           (virtual mode)\n"
 "        [-h]                 (help)\n",
 		basename(cpy_path));
@@ -618,12 +629,13 @@ static int parse_arg(int argc, char *argv[])
 
 	/* init */
 	app.data_dir = NULL;
-	app.devname = DEFAULT_TTY_DEV;
+	app.devname = NULL;
 	app.ch = 1;
 	app.mode = APP_MODE_TRANSMIT;
 	memset(app.cmd, 0, sizeof(app.cmd));
 	app.cmd_cnt = 0;
 	app.trunc_len = PCOPRS1_DATA_LEN;
+	app.is_arduino = 0;
 	app.is_virtual = 0;
 
 	for (i = 1; i < argc; i++) {
@@ -664,6 +676,8 @@ static int parse_arg(int argc, char *argv[])
 			if (++i == argc)
 				return -1;
 			app.forge_fmt = argv[i];
+		} else if (!strcmp(argv[i], "-arduino")) {
+			app.is_arduino = 1;
 		} else if (!strcmp(argv[i], "-virtual")) {
 			app.is_virtual = 1;
 		} else if (!strcmp(argv[i], "-h")) {
@@ -682,8 +696,6 @@ static int parse_arg(int argc, char *argv[])
 	}
 
 	/* sanity check */
-	if (app.devname == NULL)
-		return -1;
 	if ((app.mode == APP_MODE_DELETE) && (app.cmd_cnt == 0))
 		return -1;
 	if ((app.mode == APP_MODE_FORGE) && (app.cmd_cnt != 1))
@@ -694,6 +706,10 @@ static int parse_arg(int argc, char *argv[])
 	}
 
 	/* defaults */
+	if (app.devname == NULL) {
+		app.devname =
+			app.is_arduino ? ARDUINO_TTY_DEV : DEFAULT_TTY_DEV;
+	}
 	if (app.data_dir == NULL) {
 		char *home_dir = getenv("HOME");
 		if (home_dir) {
