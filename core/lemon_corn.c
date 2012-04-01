@@ -399,7 +399,8 @@ static void receive_main(int fd)
 		if (app.trunc_len < PCOPRS1_DATA_LEN)
 			memset(rbuf + app.trunc_len, 0,
 			       PCOPRS1_DATA_LEN - app.trunc_len);
-		printf("%s\n", hexdump(s, rbuf, r));
+		hexdump(s, rbuf, r);
+		puts(s);
 		return;
 	}
 
@@ -474,28 +475,24 @@ static void list_main(void)
 			printf("%s\n", app.data[d_idx].tag);
 			break;
 		case LIST_MODE_HEX:
-			printf("%s:\n", app.data[d_idx].tag);
-			printf("%s\n",
-			       hexdump(s, app.data[d_idx].data,
-				       PCOPRS1_DATA_LEN));
+			hexdump(s, app.data[d_idx].data, PCOPRS1_DATA_LEN);
+			printf("%s:\n%s\n", app.data[d_idx].tag, s);
 			break;
 		case LIST_MODE_WAVE:
-			printf("%s:\n", app.data[d_idx].tag);
-			printf("%s\n",
-			       wavedump(s, app.data[d_idx].data,
-					PCOPRS1_DATA_LEN));
+			wavedump(s, app.data[d_idx].data, PCOPRS1_DATA_LEN);
+			printf("%s:\n%s\n", app.data[d_idx].tag, s);
 			break;
 		case LIST_MODE_FORMATTED:
 			printf("%s:\n", app.data[d_idx].tag);
 			if (remocon_format_analyze(fmt_tag, s,
 						   app.data[d_idx].data,
-						   PCOPRS1_DATA_LEN) < 0) {
-				printf("unknown format!\n%s\n",
-				       hexdump(s, app.data[d_idx].data,
-					       PCOPRS1_DATA_LEN));
-				break;
+						   PCOPRS1_DATA_LEN) == 0) {
+				printf("format = %s, data = %s\n", fmt_tag, s);
+			} else {
+				hexdump(s, app.data[d_idx].data,
+					PCOPRS1_DATA_LEN);
+				printf("unknown format!\n%s\n", s);
 			}
-			printf("format = %s, data = %s\n", fmt_tag, s);
 			break;
 		}
 	}
