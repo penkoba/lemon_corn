@@ -304,14 +304,8 @@ static void transmit_cmdline(int fd)
 {
 	int i;
 
-	for (i = 0; i < app.cmd_cnt; i++) {
-		if (!strncmp(app.cmd[i], "_sleep", 6)) {
-			int time = atoi(&app.cmd[i][6]);
-			printf("sleeping %d sec(s)...\n", time);
-			sleep(atoi(&app.cmd[i][6]));
-		} else
-			transmit_cmd(fd, app.cmd[i]);
-	}
+	for (i = 0; i < app.cmd_cnt; i++)
+		transmit_cmd(fd, app.cmd[i]);
 }
 
 static char *fgets_prompt(char *s, int size, FILE *stream)
