@@ -400,7 +400,6 @@ int remocon_format_forge_nec(unsigned char *ptn, size_t sz,
 	int idx;
 	forger_t fger;
 	unsigned long t_start;
-	int i;
 
 	forger_init(&fger, ptn, sz);
 
@@ -436,11 +435,6 @@ int remocon_format_forge_nec(unsigned char *ptn, size_t sz,
 	/* repeat */
 	forge_pulse(&fger, NEC_REPEATER_H_LEN_TYP, NEC_REPEATER_L_LEN_TYP);
 	forge_dur(&fger, 1, NEC_DATA_H_LEN_TYP);
-
-	for (i = 0; i < sz; i++) {
-		printf("%02x", ptn[i]);
-	}
-	putchar('\n');
 
 	return 0;
 }
@@ -577,7 +571,6 @@ int remocon_format_forge_aeha(unsigned char *ptn, size_t sz,
 	int idx;
 	int repeat;
 	forger_t fger;
-	int i;
 
 	forger_init(&fger, ptn, sz);
 
@@ -610,11 +603,6 @@ int remocon_format_forge_aeha(unsigned char *ptn, size_t sz,
 		/* trailer */
 		forge_dur(&fger, 0, AEHA_TRAILER_L_LEN_TYP);
 	}
-
-	for (i = 0; i < sz; i++) {
-		printf("%02x", ptn[i]);
-	}
-	putchar('\n');
 
 	return 0;
 }
@@ -753,7 +741,6 @@ int remocon_format_forge_sony(unsigned char *ptn, size_t sz,
 	int idx;
 	int repeat;
 	forger_t fger;
-	int i;
 
 	cmd_concat[0] = ((prod & 0x0001) << 7) | cmd;
 	cmd_concat[1] =  (prod & 0x01fe) >> 1;
@@ -779,11 +766,6 @@ int remocon_format_forge_sony(unsigned char *ptn, size_t sz,
 		/* trailer */
 		forge_until(&fger, 0, t_start + SONY_CYCLE_LEN_TYP);
 	}
-
-	for (i = 0; i < sz; i++) {
-		printf("%02x", ptn[i]);
-	}
-	putchar('\n');
 
 	return 0;
 }
@@ -867,7 +849,8 @@ static int koiz_on_flip_dn(const analyzer_t *azer)
 		return 0;
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched pattern: LOW duration (%4.1fms) / HIGH duration (%4.1fms)"
+		  "%sunmatched pattern:"
+		  " LOW duration (%4.1fms) / HIGH duration (%4.1fms)"
 		  " at %d (state = %d)\n",
 		   azer->msg_head, azer->dur_prev / 1000.0, azer->dur / 1000.0,
 		   azer->src_idx, azer->state);

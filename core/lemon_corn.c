@@ -52,6 +52,7 @@
 #define APP_MODE_LIST		2
 #define APP_MODE_DELETE		3
 #define APP_MODE_FORGE		4
+#define APP_MODE_FORGE_TRANSMIT	5
 
 #define LIST_MODE_NONE		0
 #define LIST_MODE_HEX		1
@@ -530,11 +531,10 @@ static void delete_main(void)
 	printf("written new data.\n");
 }
 
-static void forge_main(void)
+static void forge_main(int fd)
 {
 	struct remocon_data new_data;
-	struct remocon_data *dst;
-	int d_idx;
+	struct remocon_data *dst = NULL;
 	char *p0, *p1, *p2;
 
 	p0 = app.forge_fmt;
@@ -547,13 +547,18 @@ static void forge_main(void)
 			goto format_err;
 	p2++;
 
-	d_idx = find_cmd_idx(app.cmd[0], app.data, app.data_cnt);
-	if (d_idx >= 0) {
-		dst = &app.data[d_idx];
-	} else {
+	if (app.mode == APP_MODE_FORGE) {
+		int d_idx = find_cmd_idx(app.cmd[0], app.data, app.data_cnt);
+		if (d_idx >= 0) {
+			dst = &app.data[d_idx];
+		} else {
+			dst = &new_data;
+			memset(dst->tag, 0, TAG_LEN);
+			strcpy(dst->tag, app.cmd[0]);
+		}
+	} else {	/* APP_MODE_FORGE_TRANSMIT */
 		dst = &new_data;
 		memset(dst->tag, 0, TAG_LEN);
-		strcpy(dst->tag, app.cmd[0]);
 	}
 
 	if (!strncmp(p0, "AEHA,", p1 - p0)) {
@@ -580,11 +585,18 @@ static void forge_main(void)
 	}
 
 	/* data file write */
-	if (dst == &new_data)
-		save_cmd(&new_data, 1);	/* append new_data */
-	else
-		save_cmd(NULL, 0);	/* save modified data */
-
+	if (app.mode == APP_MODE_FORGE_TRANSMIT) {
+		printf("transmitting ...\n");
+		transmit(fd, app.ch, new_data.data, PCOPRS1_DATA_LEN);
+	} else {
+		char s[PCOPRS1_DATA_LEN * 8 + 1];
+		hexdump(s, new_data.data, PCOPRS1_DATA_LEN);
+		puts(s);
+		if (dst == &new_data)
+			save_cmd(&new_data, 1);	/* append new_data */
+		else
+			save_cmd(NULL, 0);	/* save modified data */
+	}
 
 	return;
 
@@ -610,7 +622,7 @@ static void usage(const char *cmd_path)
 "        [-ch <channel>]      (default is 1)\n"
 "        [-dd <data_dir>]     (searches default locations if not specified)\n"
 "        [-trunc <trunc_len>] (truncate received signal)\n"
-"        [-forge <format> <command>]  (forge command with known format)\n"
+"        [-forge <format> [<command>]]  (forge command with known format)\n"
 "                 format: AEHA,<custom_hex>,<cmd_hex>\n"
 "                         NEC,<custom_hex>,<cmd_hex>\n"
 "                         SONY,<prod_hex>,<cmd_hex>\n"
@@ -707,8 +719,6 @@ static int parse_arg(int argc, char *argv[])
 	/* sanity check */
 	if ((app.mode == APP_MODE_DELETE) && (app.cmd_cnt == 0))
 		return -1;
-	if ((app.mode == APP_MODE_FORGE) && (app.cmd_cnt != 1))
-		return -1;
 	if (app.dont_save) {
 		if (app.mode != APP_MODE_RECEIVE) {
 			app_error("unrecognized -ns\n");
@@ -716,6 +726,15 @@ static int parse_arg(int argc, char *argv[])
 		}
 		if (app.cmd_cnt != 0) {
 			app_error("commmand specified with -ns\n");
+			return -1;
+		}
+	}
+	if (app.mode == APP_MODE_FORGE) {
+		if (app.cmd_cnt == 0) {
+			app.mode = APP_MODE_FORGE_TRANSMIT;
+		} else if (app.cmd_cnt > 1) {
+			app_error("too many commmands specified"
+				  " with -forge.\n");
 			return -1;
 		}
 	}
@@ -807,7 +826,8 @@ int main(int argc, char **argv)
 		delete_main();
 		break;
 	case APP_MODE_FORGE:
-		forge_main();
+	case APP_MODE_FORGE_TRANSMIT:
+		forge_main(fd);
 		break;
 	}
 
