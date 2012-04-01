@@ -75,6 +75,7 @@ static struct app {
 	char *forge_fmt;
 	int data_cnt;
 	int trunc_len;
+	int dont_save;
 	int is_arduino;
 	int is_virtual;
 } app;
@@ -418,6 +419,8 @@ static void receive_main(int fd)
 	for (i = 0; i < app.cmd_cnt; i++) {
 		struct remocon_data *dst;
 		int d_idx;
+		char fmt_tag_s[32];
+		char fmt_data_s[PCOPRS1_DATA_LEN * 8 + 1];
 
 		printf("waiting ir data for %s ...\n", app.cmd[i]);
 
@@ -436,10 +439,21 @@ static void receive_main(int fd)
 			memset(dst->data + app.trunc_len, 0,
 			       PCOPRS1_DATA_LEN - app.trunc_len);
 		printf("received.\n");
+
+		/* print received data format */
+		if (remocon_format_analyze(fmt_tag_s, fmt_data_s,
+					   dst->data, PCOPRS1_DATA_LEN) == 0) {
+			printf("format = %s, data = %s\n",
+			       fmt_tag_s, fmt_data_s);
+		} else {
+			hexdump(fmt_data_s, dst->data, PCOPRS1_DATA_LEN);
+			printf("unknown format!\n%s\n", fmt_data_s);
+		}
 	}
 
 	/* data file write */
-	save_cmd(new_data, new_data_cnt);
+	if (!app.dont_save)
+		save_cmd(new_data, new_data_cnt);
 
 	free(new_data);
 }
@@ -600,6 +614,7 @@ static void usage(const char *cmd_path)
 "        [-f]                 (list with format analysis)\n"
 "        [-d <command(s)>]    (delete)\n"
 "        [command(s)]         (send)\n"
+"        [-ns]                (do not save with -r)\n"
 "        [-s <serial device>] (default is " DEFAULT_TTY_DEV ")\n"
 "        [-ch <channel>]      (default is 1)\n"
 "        [-dd <data_dir>]     (searches default locations if not specified)\n"
@@ -635,6 +650,7 @@ static int parse_arg(int argc, char *argv[])
 	memset(app.cmd, 0, sizeof(app.cmd));
 	app.cmd_cnt = 0;
 	app.trunc_len = PCOPRS1_DATA_LEN;
+	app.dont_save = 0;
 	app.is_arduino = 0;
 	app.is_virtual = 0;
 
@@ -659,6 +675,8 @@ static int parse_arg(int argc, char *argv[])
 			app.list_mode = LIST_MODE_FORMATTED;
 		} else if (!strcmp(argv[i], "-d")) {
 			app.mode = APP_MODE_DELETE;
+		} else if (!strcmp(argv[i], "-ns")) {
+			app.dont_save = 1;
 		} else if (!strcmp(argv[i], "-ch")) {
 			if (++i == argc)
 				return -1;
@@ -700,6 +718,16 @@ static int parse_arg(int argc, char *argv[])
 		return -1;
 	if ((app.mode == APP_MODE_FORGE) && (app.cmd_cnt != 1))
 		return -1;
+	if (app.dont_save) {
+		if (app.mode != APP_MODE_RECEIVE) {
+			app_error("unrecognized -ns\n");
+			return -1;
+		}
+		if (app.cmd_cnt != 0) {
+			app_error("commmand specified with -ns\n");
+			return -1;
+		}
+	}
 	if ((app.ch < 1) || (app.ch > 4)) {
 		app_error("bad channel (%d)\n", app.ch);
 		return -1;
