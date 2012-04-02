@@ -590,7 +590,7 @@ static void forge_main(int fd)
 		transmit(fd, app.ch, new_data.data, PCOPRS1_DATA_LEN);
 	} else {
 		char s[PCOPRS1_DATA_LEN * 8 + 1];
-		hexdump(s, new_data.data, PCOPRS1_DATA_LEN);
+		hexdump(s, dst->data, PCOPRS1_DATA_LEN);
 		puts(s);
 		if (dst == &new_data)
 			save_cmd(&new_data, 1);	/* append new_data */
