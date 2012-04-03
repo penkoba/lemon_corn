@@ -1,3 +1,4 @@
 /core/lemon_corn
 /core/remocon-test
+/serial_proxyd/serial_proxyd
 *.o

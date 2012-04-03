@@ -28,6 +28,9 @@
 #include <errno.h>
 #include <termios.h>
 #include <sys/stat.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 #include "remocon_format.h"
 #include "file_util.h"
 #include "string_util.h"
@@ -41,6 +44,7 @@
 
 #define DEFAULT_TTY_DEV		"/dev/ttyUSB0"
 #define ARDUINO_TTY_DEV		"/dev/ttyACM0"
+#define PORT_STR		"26851"
 
 #define TAG_LEN			32
 #define CMD_MAX			50
@@ -77,6 +81,7 @@ static struct app {
 	int data_cnt;
 	int trunc_len;
 	int dont_save;
+	const char *proxy_host;
 	int is_arduino;
 	int is_virtual;
 } app;
@@ -111,6 +116,46 @@ static int serial_open(const char *devname, struct termios *tio_old)
 static int serial_close(int fd, const struct termios *tio_old)
 {
 	tcsetattr(fd, TCSANOW, tio_old);
+	return close(fd);
+}
+
+static int proxy_open(const char *host_name, const char *port_str)
+{
+	int fd;
+	struct addrinfo ai_hint, *aip;
+	int r;
+
+	if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+		app_error("socket() failed\n");
+		return -1;
+	}
+
+	memset(&ai_hint, 0, sizeof(struct addrinfo));
+	ai_hint.ai_family = AF_INET;
+	ai_hint.ai_socktype = SOCK_STREAM;
+	ai_hint.ai_flags = 0;
+	ai_hint.ai_protocol = 0;
+
+	if ((r = getaddrinfo(host_name, port_str, &ai_hint, &aip)) < 0) {
+		app_error("getaddrinfo: %s\n", gai_strerror(r));
+		close(fd);
+		return -1;
+	}
+
+	if (connect(fd, aip->ai_addr, aip->ai_addrlen) < 0) {
+		app_error("connect() failed\n");
+		close(fd);
+		freeaddrinfo(aip);
+		return -1;
+	}
+
+	freeaddrinfo(aip);
+
+	return fd;
+}
+
+static int proxy_close(int fd)
+{
 	return close(fd);
 }
 
@@ -628,6 +673,7 @@ static void usage(const char *cmd_path)
 "                         NEC,<custom_hex>,<cmd_hex>\n"
 "                         SONY,<prod_hex>,<cmd_hex>\n"
 "        [-arduino]           (arduino mode)\n"
+"        [-proxy <host>]      (specify serial proxy)\n"
 "        [-virtual]           (virtual mode)\n"
 "        [-h]                 (help)\n",
 		basename(cpy_path));
@@ -655,6 +701,7 @@ static int parse_arg(int argc, char *argv[])
 	app.cmd_cnt = 0;
 	app.trunc_len = PCOPRS1_DATA_LEN;
 	app.dont_save = 0;
+	app.proxy_host = NULL;
 	app.is_arduino = 0;
 	app.is_virtual = 0;
 
@@ -698,6 +745,10 @@ static int parse_arg(int argc, char *argv[])
 			if (++i == argc)
 				return -1;
 			app.forge_fmt = argv[i];
+		} else if (!strcmp(argv[i], "-proxy")) {
+			if (++i == argc)
+				return -1;
+			app.proxy_host = argv[i];
 		} else if (!strcmp(argv[i], "-arduino")) {
 			app.is_arduino = 1;
 		} else if (!strcmp(argv[i], "-virtual")) {
@@ -798,7 +849,10 @@ int main(int argc, char **argv)
 	    (app.mode == APP_MODE_DELETE) ||
 	    (app.mode == APP_MODE_FORGE))
 		fd = 0;
-	else {
+	else if (app.proxy_host) {
+		if ((fd = proxy_open(app.proxy_host, PORT_STR)) < 0)
+			return 1;
+	} else {
 		if ((fd = serial_open(app.devname, &tio_old)) < 0)
 			return 1;
 	}
@@ -833,8 +887,12 @@ int main(int argc, char **argv)
 	}
 
 out:
-	if (fd)
-		serial_close(fd, &tio_old);
+	if (fd) {
+		if (app.proxy_host)
+			proxy_close(fd);
+		else
+			serial_close(fd, &tio_old);
+	}
 
 	return 0;
 }
