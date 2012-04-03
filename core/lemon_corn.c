@@ -65,7 +65,7 @@ struct remocon_data {
 };
 
 static struct app {
-	char *devname;
+	const char *devname;
 	char *cmd[CMD_MAX + 1];
 	int cmd_cnt;
 	int ch;
@@ -116,7 +116,7 @@ static int serial_close(int fd, const struct termios *tio_old)
 
 static char *hexdump(char *dst, const unsigned char *data, size_t sz)
 {
-	int i;
+	unsigned int i;
 
 	for (i = 0; i < sz; i++)
 		sprintf(&dst[i * 2], "%02x", data[i]);
@@ -126,7 +126,7 @@ static char *hexdump(char *dst, const unsigned char *data, size_t sz)
 
 static char *wavedump(char *dst, const unsigned char *data, size_t sz)
 {
-	int i, j = 0;
+	unsigned int i, j = 0;
 	unsigned char bit;
 
 	for (i = 0; i < sz; i++)
@@ -260,6 +260,7 @@ static int transmit(int fd, int ch, const unsigned char *data, size_t sz)
 static int receive(int fd, unsigned char *data, size_t sz)
 {
 	unsigned char c;
+	int read_len;
 
 	if (sz < PCOPRS1_DATA_LEN) {
 		app_error("not enough receive data buffer size\n");
@@ -273,12 +274,12 @@ static int receive(int fd, unsigned char *data, size_t sz)
 		return -1;
 	if (remocon_expect(fd, PCOPRS1_CMD_RECEIVE_DATA) < 0)
 		return -1;
-	if ((sz = remocon_read(fd, data, PCOPRS1_DATA_LEN)) < 0)
+	if ((read_len = remocon_read(fd, data, PCOPRS1_DATA_LEN)) < 0)
 		return -1;
 	if (remocon_expect(fd, PCOPRS1_CMD_DATA_COMPLETION) < 0)
 		return -1;
 
-	return sz;
+	return read_len;
 }
 
 static int transmit_cmd(int fd, const char *cmd)

@@ -1,5 +1,5 @@
 CC := gcc
-CFLAGS := -Wall -O2
+CFLAGS := -Wall -W -O2
 LDFLAGS :=
 TEST_OBJS := remocon-test.o
 OBJS := lemon_corn.o remocon_format.o file_util.o string_util.o

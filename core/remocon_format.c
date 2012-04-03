@@ -959,7 +959,7 @@ static int analyze(analyzer_t *azer, unsigned char *dst,
 	int r;
 
 	analyzer_init(azer);
-	for (azer->src_idx = 0; azer->src_idx < sz_bit; azer->src_idx++) {
+	for (azer->src_idx = 0; azer->src_idx < (int)sz_bit; azer->src_idx++) {
 		char this_bit = get_bit_in_ary(ptn, azer->src_idx);
 
 		if ((azer->state == ANALIZER_STATE_DATA) ||

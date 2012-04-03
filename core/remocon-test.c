@@ -176,6 +176,7 @@ static int transmit(int fd, int ch, unsigned char *data, size_t sz)
 static int receive(int fd, unsigned char *data, size_t sz)
 {
 	unsigned char c;
+	int read_len;
 
 	if (sz < PCOPRS1_DATA_LEN) {
 		app_error("not enough receive data buffer size\n");
@@ -189,12 +190,12 @@ static int receive(int fd, unsigned char *data, size_t sz)
 		return -1;
 	if (remocon_expect(fd, PCOPRS1_CMD_RECEIVE_DATA) < 0)
 		return -1;
-	if ((sz = remocon_read(fd, data, PCOPRS1_DATA_LEN, -1)) < 0)
+	if ((read_len = remocon_read(fd, data, PCOPRS1_DATA_LEN, -1)) < 0)
 		return -1;
 	if (remocon_expect(fd, PCOPRS1_CMD_DATA_COMPLETION) < 0)
 		return -1;
 
-	return sz;
+	return read_len;
 }
 
 static void usage(const char *cmd_path)
@@ -313,7 +314,7 @@ int main(int argc, char **argv)
 		}
 		printf("\n");
 	} else {
-		for (i = 0; i < ARRAY_SIZE(remocon_data); i++) {
+		for (i = 0; i < (int)ARRAY_SIZE(remocon_data); i++) {
 			if (!strcmp(app.cmd, remocon_data[i].tag)) {
 				app_debug(REMOCON_TEST, 1, "Tx: %s\n", app.cmd);
 				transmit(fd, app.ch, remocon_data[i].data,
