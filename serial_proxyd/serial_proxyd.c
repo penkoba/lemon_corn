@@ -222,9 +222,15 @@ static int read_all_fds(fd_set *testfds, struct server_fds *fds)
 			syslog(LOG_ERR, "recv() failed\n");
 			return -1;
 		}
-		if (send(fds->fd_conn, buf, r_len, 0) < r_len) {
-			syslog(LOG_ERR, "send() failed\n");
-			return -1;
+		if (fds->fd_conn < 0) {
+			syslog(LOG_ERR,
+			       "data at fd_ser, but no connection"
+			       " with client. discarding.\n");
+		} else {
+			if (send(fds->fd_conn, buf, r_len, 0) < r_len) {
+				syslog(LOG_ERR, "send() failed\n");
+				return -1;
+			}
 		}
 	}
 
