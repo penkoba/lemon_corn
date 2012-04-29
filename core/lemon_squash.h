@@ -1,0 +1,9 @@
+#ifndef _LEMON_SQUASH_H
+#define _LEMON_SQUASH_H
+
+#define LEMON_SQUASH_CMD_RECEIVE2	's'
+#define LEMON_SQUASH_CMD_TRANSMIT2	'u'
+
+#define LEMON_SQUASH_DATA_UNIT_LEN	16
+
+#endif /* _LEMON_SQUASH_H */

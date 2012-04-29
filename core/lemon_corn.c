@@ -31,10 +31,12 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include "lemon_corn_data.h"
 #include "remocon_format.h"
 #include "file_util.h"
 #include "string_util.h"
 #include "PC-OP-RS1.h"
+#include "lemon_squash.h"
 
 #define DEBUG_HEAD_LEMON_CORN	"[lemon_corn] "
 #ifndef DEBUG_LEVEL_LEMON_CORN
@@ -46,7 +48,6 @@
 #define ARDUINO_TTY_DEV		"/dev/ttyACM0"
 #define PORT_STR		"26851"
 
-#define TAG_LEN			32
 #define CMD_MAX			50
 #define BAUDRATE		B115200
 #define DATA_FN			"lemon_corn.data"
@@ -63,11 +64,6 @@
 #define LIST_MODE_WAVE		2
 #define LIST_MODE_FORMATTED	3
 
-struct remocon_data {
-	char tag[TAG_LEN];
-	unsigned char data[PCOPRS1_DATA_LEN];
-};
-
 static struct app {
 	const char *devname;
 	char *cmd[CMD_MAX + 1];
@@ -76,10 +72,9 @@ static struct app {
 	unsigned long mode;
 	unsigned long list_mode;
 	char *data_dir, *data_fn;
-	struct remocon_data *data;
+	struct lcdata data;
 	char *forge_fmt;
-	int data_cnt;
-	int trunc_len;
+	size_t data_len, trunc_len;
 	int dont_save;
 	const char *proxy_host;
 	int is_arduino;
@@ -165,6 +160,7 @@ static char *hexdump(char *dst, const unsigned char *data, size_t sz)
 
 	for (i = 0; i < sz; i++)
 		sprintf(&dst[i * 2], "%02x", data[i]);
+	dst[sz * 2] = '\0';
 
 	return dst;
 }
@@ -177,20 +173,9 @@ static char *wavedump(char *dst, const unsigned char *data, size_t sz)
 	for (i = 0; i < sz; i++)
 		for (bit = 0x01; bit != 0x00; j++, bit <<= 1)
 			dst[j] = (data[i] & bit) ? '-' : '.';
+	dst[sz * 8] = '\0';
 
 	return dst;
-}
-
-static int find_cmd_idx(const char *tag, const struct remocon_data *data,
-			int data_cnt)
-{
-	int i;
-
-	for (i = 0; i < data_cnt; i++)
-		if (!strcmp(tag, data[i].tag))
-			return i;
-	/* did not match */
-	return -1;
 }
 
 static int remocon_send(int fd, const unsigned char *data, size_t sz)
@@ -218,6 +203,25 @@ static int remocon_send(int fd, const unsigned char *data, size_t sz)
 
 	return sz;
 }
+
+static void save_cmd_with_new(const struct lcdata *new_lcdata)
+{
+	struct stat st;
+
+	if (stat(app.data_dir, &st) < 0) {
+		if (mkdir(app.data_dir, 0755) < 0) {
+			app_error("mkdir failed: %s (%s)\n",
+				  app.data_fn, strerror(errno));
+			return;
+		}
+	}
+	lcdata_save(&app.data, app.data_fn);
+	if (new_lcdata)
+		lcdata_save_append(new_lcdata, app.data_fn);
+	printf("written new data to %s.\n", app.data_fn);
+}
+
+#define save_cmd()	 save_cmd_with_new(NULL)
 
 static int remocon_read(int fd, unsigned char *data, size_t sz)
 {
@@ -284,20 +288,46 @@ static int transmit(int fd, int ch, const unsigned char *data, size_t sz)
 {
 	unsigned char c;
 
-	c = PCOPRS1_CMD_TRANSMIT;
-	if (remocon_send(fd, &c, 1) < 0)
-		return -1;
-	if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
-		return -1;
-	c = PCOPRS1_CMD_CHANNEL(ch);
-	if (remocon_send(fd, &c, 1) < 0)
-		return -1;
-	if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
-		return -1;
-	if (remocon_send(fd, data, sz) < 0)
-		return -1;
-	if (remocon_expect(fd, PCOPRS1_CMD_DATA_COMPLETION) < 0)
-		return -1;
+	if (sz == PCOPRS1_DATA_LEN) {
+		c = PCOPRS1_CMD_TRANSMIT;
+		if (remocon_send(fd, &c, 1) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
+			return -1;
+		c = PCOPRS1_CMD_CHANNEL(ch);
+		if (remocon_send(fd, &c, 1) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
+			return -1;
+		if (remocon_send(fd, data, sz) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_DATA_COMPLETION) < 0)
+			return -1;
+	} else {
+		if (sz % LEMON_SQUASH_DATA_UNIT_LEN != 0) {
+			app_error("invalid data len %d\n", sz);
+			return -1;
+		}
+		c = LEMON_SQUASH_CMD_TRANSMIT2;
+		if (remocon_send(fd, &c, 1) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
+			return -1;
+		c = sz / LEMON_SQUASH_DATA_UNIT_LEN;
+		if (remocon_send(fd, &c, 1) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
+			return -1;
+		c = PCOPRS1_CMD_CHANNEL(ch);
+		if (remocon_send(fd, &c, 1) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
+			return -1;
+		if (remocon_send(fd, data, sz) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_DATA_COMPLETION) < 0)
+			return -1;
+	}
 
 	return 0;
 }
@@ -307,22 +337,40 @@ static int receive(int fd, unsigned char *data, size_t sz)
 	unsigned char c;
 	int read_len;
 
-	if (sz < PCOPRS1_DATA_LEN) {
-		app_error("not enough receive data buffer size\n");
-		return -1;
+	if (sz == PCOPRS1_DATA_LEN) {
+		c = PCOPRS1_CMD_RECEIVE;
+		if (remocon_send(fd, &c, 1) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_RECEIVE_DATA) < 0)
+			return -1;
+		if ((read_len = remocon_read(fd, data, PCOPRS1_DATA_LEN)) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_DATA_COMPLETION) < 0)
+			return -1;
+	} else {
+		if (sz % LEMON_SQUASH_DATA_UNIT_LEN != 0) {
+			app_error("invalid data len %d\n", sz);
+			return -1;
+		}
+		c = LEMON_SQUASH_CMD_RECEIVE2;
+		if (remocon_send(fd, &c, 1) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
+			return -1;
+		c = sz / LEMON_SQUASH_DATA_UNIT_LEN;
+		if (remocon_send(fd, &c, 1) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_RECEIVE_DATA) < 0)
+			return -1;
+		if ((read_len = remocon_read(fd, data, sz)) < 0)
+			return -1;
+		if (remocon_expect(fd, PCOPRS1_CMD_DATA_COMPLETION) < 0)
+			return -1;
 	}
-
-	c = PCOPRS1_CMD_RECEIVE;
-	if (remocon_send(fd, &c, 1) < 0)
-		return -1;
-	if (remocon_expect(fd, PCOPRS1_CMD_OK) < 0)
-		return -1;
-	if (remocon_expect(fd, PCOPRS1_CMD_RECEIVE_DATA) < 0)
-		return -1;
-	if ((read_len = remocon_read(fd, data, PCOPRS1_DATA_LEN)) < 0)
-		return -1;
-	if (remocon_expect(fd, PCOPRS1_CMD_DATA_COMPLETION) < 0)
-		return -1;
 
 	return read_len;
 }
@@ -334,13 +382,14 @@ static int transmit_cmd(int fd, const char *cmd)
 		printf("sleeping %d sec(s)...\n", time);
 		sleep(time);
 	} else {
-		int d_idx = find_cmd_idx(cmd, app.data, app.data_cnt);
-		if (d_idx < 0) {
+		struct lcdata_ent ent;
+
+		if (lcdata_get_cmd_by_tag(&app.data, cmd, &ent) < 0) {
 			app_error("Unknown command: %s\n", cmd);
 			return -1;
 		}
 		printf("transmitting %s ...\n", cmd);
-		transmit(fd, app.ch, app.data[d_idx].data, PCOPRS1_DATA_LEN);
+		transmit(fd, app.ch, ent.data, ent.data_size);
 		usleep(500000);
 	}
 
@@ -395,35 +444,29 @@ static void transmit_main(int fd)
 		transmit_interactive(fd);
 }
 
-static void save_cmd(const struct remocon_data *new_data, int cnt)
+static void delete_main(void)
 {
-	struct stat st;
-	int fd;
+	int i;
 
-	if (stat(app.data_dir, &st) < 0) {
-		if (mkdir(app.data_dir, 0755) < 0) {
-			app_error("mkdir failed: %s (%s)\n",
-				  app.data_fn, strerror(errno));
-			return;
-		}
+	for (i = 0; i < app.cmd_cnt; i++) {
+		if (lcdata_delete_by_tag(&app.data, app.cmd[i]) < 0)
+			app_error("Unknown command: %s\n", app.cmd[i]);
+		else
+			printf("deleting %s\n", app.cmd[i]);
 	}
-	if ((fd = open(app.data_fn, O_WRONLY | O_CREAT, 0644)) < 0) {
-		app_error("data file open failed: %s (%s)\n",
-			  app.data_fn, strerror(errno));
-		return;
-	}
-	write(fd, app.data, sizeof(struct remocon_data) * app.data_cnt);
-	write(fd, new_data, sizeof(struct remocon_data) * cnt);
-	close(fd);
-	printf("written new data to %s.\n", app.data_fn);
+	save_cmd();
 }
 
 static void receive_main(int fd)
 {
-	struct remocon_data *new_data;
-	int new_data_cnt;
+	struct lcdata new_lcdata;
+	size_t ent_img_struct_size;
 	unsigned char c;
 	unsigned char ex_ary[2];
+	unsigned char rbuf[app.data_len];
+	char fmt_tag_s[32];
+	char fmt_data_s[app.data_len * 2 + 1];
+	void *p;
 	int r;
 	int i;
 
@@ -438,80 +481,107 @@ static void receive_main(int fd)
 	remocon_expect2(fd, ex_ary, sizeof(ex_ary));
 
 	if (app.cmd_cnt == 0) {
-		unsigned char rbuf[PCOPRS1_DATA_LEN];
-		char s[PCOPRS1_DATA_LEN * 2 + 1];
-		r = receive(fd, rbuf, PCOPRS1_DATA_LEN);
+		// FIXME: merge with the below
+		printf("waiting ir data for ...\n");
+		r = receive(fd, rbuf, app.data_len);
 		if (r < 0)
 			return;
-		if (app.trunc_len < PCOPRS1_DATA_LEN)
+		if (app.trunc_len < app.data_len)
 			memset(rbuf + app.trunc_len, 0,
-			       PCOPRS1_DATA_LEN - app.trunc_len);
-		hexdump(s, rbuf, r);
-		puts(s);
+			       app.data_len - app.trunc_len);
+
+		/* print received data format */
+		if (remocon_format_analyze(fmt_tag_s, fmt_data_s,
+					   rbuf, app.data_len) == 0) {
+			printf("format = %s, data = %s\n",
+			       fmt_tag_s, fmt_data_s);
+		} else {
+			hexdump(fmt_data_s, rbuf, app.data_len);
+			printf("unknown format!\n%s\n", fmt_data_s);
+		}
 		return;
 	}
 
-	new_data = malloc(sizeof(struct remocon_data) * app.cmd_cnt);
-	if (new_data == NULL) {
+	ent_img_struct_size =
+		(app.data_len == PCOPRS1_DATA_LEN) ?
+			sizeof(struct lcdata_ent_img_fxd) :
+			sizeof(struct lcdata_ent_img_var);
+	new_lcdata.img_size =
+		(ent_img_struct_size + app.data_len) * app.cmd_cnt;
+	new_lcdata.ent_img = malloc(new_lcdata.img_size);
+	if (new_lcdata.ent_img == NULL) {
 		app_error("memory allocation failed.\n");
 		return;
 	}
 
-	new_data_cnt = 0;
+	p = new_lcdata.ent_img;
 	for (i = 0; i < app.cmd_cnt; i++) {
-		struct remocon_data *dst;
-		int d_idx;
-		char fmt_tag_s[32];
-		char fmt_data_s[PCOPRS1_DATA_LEN * 8 + 1];
+		char *tag;
+		unsigned char *data;
+
+		if (app.data_len == PCOPRS1_DATA_LEN) {
+			struct lcdata_ent_img_fxd *fent =
+				(struct lcdata_ent_img_fxd *)p;
+			tag  = fent->tag;
+			data = fent->data;
+		} else {
+			struct lcdata_ent_img_var *vent =
+				(struct lcdata_ent_img_var *)p;
+			lcdata_ent_img_var_initialize(vent, app.data_len);
+			tag  = vent->tag;
+			data = vent->data;
+		}
+
+		lcdata_delete_by_tag(&app.data, app.cmd[i]);
+
+		memset(tag, 0, LEMON_CORN_TAG_LEN);
+		strcpy(tag, app.cmd[i]);
 
 		printf("waiting ir data for %s ...\n", app.cmd[i]);
-
-		d_idx = find_cmd_idx(app.cmd[i], app.data, app.data_cnt);
-		if (d_idx >= 0) {
-			dst = &app.data[d_idx];
-		} else {
-			dst = &new_data[new_data_cnt++];
-			memset(dst->tag, 0, TAG_LEN);
-			strcpy(dst->tag, app.cmd[i]);
-		}
-		r = receive(fd, dst->data, PCOPRS1_DATA_LEN);
+		r = receive(fd, rbuf, app.data_len);
 		if (r < 0)
-			return;
-		if (app.trunc_len < PCOPRS1_DATA_LEN)
-			memset(dst->data + app.trunc_len, 0,
-			       PCOPRS1_DATA_LEN - app.trunc_len);
-		printf("received.\n");
+			goto out;
+		if (app.trunc_len < app.data_len)
+			memset(rbuf + app.trunc_len, 0,
+			       app.data_len - app.trunc_len);
 
 		/* print received data format */
 		if (remocon_format_analyze(fmt_tag_s, fmt_data_s,
-					   dst->data, PCOPRS1_DATA_LEN) == 0) {
+					   rbuf, app.data_len) == 0) {
 			printf("format = %s, data = %s\n",
 			       fmt_tag_s, fmt_data_s);
 		} else {
-			hexdump(fmt_data_s, dst->data, PCOPRS1_DATA_LEN);
+			hexdump(fmt_data_s, rbuf, app.data_len);
 			printf("unknown format!\n%s\n", fmt_data_s);
 		}
+		memcpy(data, rbuf, app.data_len);
+		p = data + app.data_len;
 	}
 
 	/* data file write */
 	if (!app.dont_save)
-		save_cmd(new_data, new_data_cnt);
+		save_cmd_with_new(&new_lcdata);
 
-	free(new_data);
+out:
+	free(new_lcdata.ent_img);
 }
 
 static void list_main(void)
 {
-	char fmt_tag[32];
-	char s[PCOPRS1_DATA_LEN * 8 + 1];
-	int d_idx;
-	int i;
+	void *p, *nextp, *endp;
+	struct lcdata_ent ent;
 
-	for (d_idx = 0; d_idx < app.data_cnt; d_idx++) {
+	lcdata_for_each_entry(&app.data, &ent, p, nextp, endp) {
+		char fmt_tag[32];
+		char *outbuf;
+
+		/* max size for LIST_MODE_WAVE */
+		outbuf = malloc(ent.data_size * 8 + 1);
 		if (app.cmd_cnt) {
 			int hit = 0;
+			int i;
 			for (i = 0; i < app.cmd_cnt; i++) {
-				if (!strcmp(app.cmd[i], app.data[d_idx].tag))
+				if (!strcmp(app.cmd[i], ent.tag))
 					hit = 1;
 			}
 			if (!hit)
@@ -519,68 +589,40 @@ static void list_main(void)
 		}
 		switch (app.list_mode) {
 		case LIST_MODE_NONE:
-			printf("%s\n", app.data[d_idx].tag);
+			printf("%s\n", ent.tag);
 			break;
 		case LIST_MODE_HEX:
-			hexdump(s, app.data[d_idx].data, PCOPRS1_DATA_LEN);
-			printf("%s:\n%s\n", app.data[d_idx].tag, s);
+			hexdump(outbuf, ent.data, ent.data_size);
+			printf("%s:\n%s\n", ent.tag, outbuf);
 			break;
 		case LIST_MODE_WAVE:
-			wavedump(s, app.data[d_idx].data, PCOPRS1_DATA_LEN);
-			printf("%s:\n%s\n", app.data[d_idx].tag, s);
+			wavedump(outbuf, ent.data, ent.data_size);
+			printf("%s:\n%s\n", ent.tag, outbuf);
 			break;
 		case LIST_MODE_FORMATTED:
-			printf("%s:\n", app.data[d_idx].tag);
-			if (remocon_format_analyze(fmt_tag, s,
-						   app.data[d_idx].data,
-						   PCOPRS1_DATA_LEN) == 0) {
-				printf("format = %s, data = %s\n", fmt_tag, s);
+			printf("%s:\n", ent.tag);
+			if (remocon_format_analyze(fmt_tag, outbuf,
+						   ent.data,
+						   ent.data_size) == 0) {
+				printf("format = %s, data = %s\n",
+				       fmt_tag, outbuf);
 			} else {
-				hexdump(s, app.data[d_idx].data,
-					PCOPRS1_DATA_LEN);
-				printf("unknown format!\n%s\n", s);
+				hexdump(outbuf, ent.data, ent.data_size);
+				printf("unknown format!\n%s\n", outbuf);
 			}
 			break;
 		}
+		free(outbuf);
 	}
-}
-
-static void delete_main(void)
-{
-	char flag[app.data_cnt];
-	int data_fd;
-	int i, d_idx;
-
-	memset(flag, 0, app.data_cnt);
-	for (i = 0; i < app.cmd_cnt; i++) {
-		d_idx = find_cmd_idx(app.cmd[i], app.data, app.data_cnt);
-		if (d_idx < 0) {
-			app_error("Unknown command: %s\n", app.cmd[i]);
-			continue;
-		}
-		printf("deleting %s\n", app.cmd[i]);
-		flag[d_idx] = 1;
-	}
-
-	/* data file write */
-	if ((data_fd = open(app.data_fn, O_WRONLY | O_TRUNC)) < 0) {
-		app_error("data file open failed: %s (%s)\n",
-			  app.data_fn, strerror(errno));
-		return;
-	}
-	for (d_idx = 0; d_idx < app.data_cnt; d_idx++) {
-		if (!flag[d_idx])
-			write(data_fd, &app.data[d_idx],
-			      sizeof(struct remocon_data));
-	}
-	close(data_fd);
-	printf("written new data.\n");
 }
 
 static void forge_main(int fd)
 {
-	struct remocon_data new_data;
-	struct remocon_data *dst = NULL;
+	struct lcdata_ent_img_fxd new_ent_img;
+	struct lcdata new_lcdata = {
+		.img_size = sizeof(struct lcdata_ent_img_fxd),
+		.ent_img = &new_ent_img,
+	};
 	char *p0, *p1, *p2;
 
 	p0 = app.forge_fmt;
@@ -593,38 +635,30 @@ static void forge_main(int fd)
 			goto format_err;
 	p2++;
 
+	memset(new_ent_img.tag, 0, LEMON_CORN_TAG_LEN);
 	if (app.mode == APP_MODE_FORGE) {
-		int d_idx = find_cmd_idx(app.cmd[0], app.data, app.data_cnt);
-		if (d_idx >= 0) {
-			dst = &app.data[d_idx];
-		} else {
-			dst = &new_data;
-			memset(dst->tag, 0, TAG_LEN);
-			strcpy(dst->tag, app.cmd[0]);
-		}
-	} else {	/* APP_MODE_FORGE_TRANSMIT */
-		dst = &new_data;
-		memset(dst->tag, 0, TAG_LEN);
+		lcdata_delete_by_tag(&app.data, app.cmd[0]);
+		strcpy(new_ent_img.tag, app.cmd[0]);
 	}
 
 	if (!strncmp(p0, "AEHA,", p1 - p0)) {
 		unsigned long custom, cmd;
 		custom = strtol(p1, NULL, 16);
 		cmd    = strtol(p2, NULL, 16);
-		remocon_format_forge_aeha(dst->data, PCOPRS1_DATA_LEN,
+		remocon_format_forge_aeha(new_ent_img.data, PCOPRS1_DATA_LEN,
 					  custom, cmd);
 	} else if (!strncmp(p0, "NEC,", p1 - p0)) {
 		unsigned long custom, cmd;
 		custom = strtol(p1, NULL, 16);
 		cmd    = strtol(p2, NULL, 16);
-		remocon_format_forge_nec(dst->data, PCOPRS1_DATA_LEN,
+		remocon_format_forge_nec(new_ent_img.data, PCOPRS1_DATA_LEN,
 					 (unsigned short)custom,
 					 (unsigned char)cmd);
 	} else if (!strncmp(p0, "SONY,", p1 - p0)) {
 		unsigned long prod, cmd;
 		prod = strtol(p1, NULL, 16);
 		cmd  = strtol(p2, NULL, 16);
-		remocon_format_forge_sony(dst->data, PCOPRS1_DATA_LEN,
+		remocon_format_forge_sony(new_ent_img.data, PCOPRS1_DATA_LEN,
 					  prod, cmd);
 	} else {
 		goto format_err;
@@ -633,15 +667,12 @@ static void forge_main(int fd)
 	/* data file write */
 	if (app.mode == APP_MODE_FORGE_TRANSMIT) {
 		printf("transmitting ...\n");
-		transmit(fd, app.ch, new_data.data, PCOPRS1_DATA_LEN);
+		transmit(fd, app.ch, new_ent_img.data, PCOPRS1_DATA_LEN);
 	} else {
-		char s[PCOPRS1_DATA_LEN * 8 + 1];
-		hexdump(s, dst->data, PCOPRS1_DATA_LEN);
+		char s[PCOPRS1_DATA_LEN * 2 + 1];
+		hexdump(s, new_ent_img.data, PCOPRS1_DATA_LEN);
 		puts(s);
-		if (dst == &new_data)
-			save_cmd(&new_data, 1);	/* append new_data */
-		else
-			save_cmd(NULL, 0);	/* save modified data */
+		save_cmd_with_new(&new_lcdata);
 	}
 
 	return;
@@ -667,6 +698,7 @@ static void usage(const char *cmd_path)
 "        [-s <serial device>] (default is " DEFAULT_TTY_DEV ")\n"
 "        [-ch <channel>]      (default is 1)\n"
 "        [-dd <data_dir>]     (searches default locations if not specified)\n"
+"        [-len <data_len>]    (data length to receive)\n"
 "        [-trunc <trunc_len>] (truncate received signal)\n"
 "        [-forge <format> [<command>]]  (forge command with known format)\n"
 "                 format: AEHA,<custom_hex>,<cmd_hex>\n"
@@ -699,6 +731,7 @@ static int parse_arg(int argc, char *argv[])
 	app.mode = APP_MODE_TRANSMIT;
 	memset(app.cmd, 0, sizeof(app.cmd));
 	app.cmd_cnt = 0;
+	app.data_len = PCOPRS1_DATA_LEN;
 	app.trunc_len = PCOPRS1_DATA_LEN;
 	app.dont_save = 0;
 	app.proxy_host = NULL;
@@ -736,6 +769,10 @@ static int parse_arg(int argc, char *argv[])
 			if (++i == argc)
 				return -1;
 			app.data_dir = argv[i];
+		} else if (!strcmp(argv[i], "-len")) {
+			if (++i == argc)
+				return -1;
+			app.data_len = atoi(argv[i]);
 		} else if (!strcmp(argv[i], "-trunc")) {
 			if (++i == argc)
 				return -1;
@@ -794,6 +831,10 @@ static int parse_arg(int argc, char *argv[])
 		app_error("bad channel (%d)\n", app.ch);
 		return -1;
 	}
+	if ((!app.is_arduino) && (app.data_len != PCOPRS1_DATA_LEN)) {
+		app_error("bad data length (%d)\n", app.data_len);
+		return -1;
+	}
 
 	/* defaults */
 	if (app.devname == NULL) {
@@ -830,8 +871,6 @@ int main(int argc, char **argv)
 {
 	int fd;
 	struct termios tio_old;
-	struct stat st;
-	ssize_t data_sz;
 	int r;
 
 	r = parse_arg(argc, argv);
@@ -858,13 +897,11 @@ int main(int argc, char **argv)
 	}
 
 	/* data */
-	if ((app.mode != APP_MODE_RECEIVE) && (stat(app.data_fn, &st) < 0)) {
+	lcdata_load(&app.data, app.data_fn);
+	if ((app.mode != APP_MODE_RECEIVE) && (app.data.img_size == 0)) {
 		app_error("data file not found: %s\n", app.data_fn);
 		goto out;
 	}
-	if ((data_sz = try_get_file_image((void **)&app.data, app.data_fn)) < 0)
-		data_sz = 0;
-	app.data_cnt = data_sz / sizeof(struct remocon_data);
 
 	/* main */
 	switch (app.mode) {
@@ -893,6 +930,7 @@ out:
 		else
 			serial_close(fd, &tio_old);
 	}
+	lcdata_free(&app.data);
 
 	return 0;
 }
