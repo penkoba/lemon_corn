@@ -143,10 +143,14 @@ static int aeha_on_end_cycle(const analyzer_t *azer,
 			  azer->cfg->fmt_tag, custom, parity, cmd);
 	}
 
-	memcpy(custom_str, &tmp_str[bytes_got * 2 - 4], 4);
-	custom_str[4] = '\0';
-	memcpy(cmd_str, tmp_str, bytes_got * 2 - 5);
-	cmd_str[bytes_got * 2 - 5] = '\0';
+	if (bytes_got >= 2) {
+		memcpy(custom_str, &tmp_str[bytes_got * 2 - 4], 4);
+		custom_str[4] = '\0';
+	}
+	if (bytes_got >= 3) {
+		memcpy(cmd_str, tmp_str, bytes_got * 2 - 5);
+		cmd_str[bytes_got * 2 - 5] = '\0';
+	}
 
 	if (azer->cycle == 0) {
 		sprintf(dst_str, "custom=%s cmd=%s", custom_str, cmd_str);

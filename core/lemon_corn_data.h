@@ -66,9 +66,9 @@ struct lcdata {
 #define lcdata_for_each_entry(lcdata, entp, p, nextp, endp) \
 	for (p = (lcdata)->ent_img, \
 		endp = (lcdata)->ent_img + (lcdata)->img_size, \
-		nextp = lcdata_parse_ent(p, entp); \
+		nextp = (p < endp) ? lcdata_parse_ent(p, entp) : NULL; \
 	     p < endp; \
-	     p = nextp, nextp = lcdata_parse_ent(p, entp))
+	     p = nextp, nextp = (p < endp) ? lcdata_parse_ent(p, entp) : NULL)
 
 extern void
 lcdata_free(struct lcdata *lcdata);
