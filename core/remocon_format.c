@@ -148,15 +148,16 @@ static int analyzer_on_end_cycle(const analyzer_t *azer,
 {
 	char dst_str[DATA_LEN_MAX * 2] = "";
 	char tmp_str[DATA_LEN_MAX * 2] = "";
+	int bytes_got = (azer->dst_idx + 7) / 8;
 	int i;
 
-	for (i = azer->data_len - 1; i >= 0; i--) {
+	for (i = bytes_got - 1; i >= 0; i--) {
 		strcatf(dst_str, "%02x", dst[i]);
 		strcatf(tmp_str, "%02x", tmp[i]);
 	}
 
-	app_debug(REMOCON_FORMAT, 1, "%scycle %d data got: %s\n",
-		  azer->msg_head, azer->cycle, tmp_str);
+	app_debug(REMOCON_FORMAT, 1, "%scycle %d data got: %s (%d bits)\n",
+		  azer->msg_head, azer->cycle, tmp_str, azer->dst_idx);
 
 	if (azer->cycle == 0)
 		memcpy(dst, tmp, azer->data_len);
@@ -1049,9 +1050,10 @@ static int koiz_on_end_cycle(const analyzer_t *azer,
 {
 	char dst_str[DATA_LEN_MAX * 2] = "";
 	char tmp_str[DATA_LEN_MAX * 2] = "";
+	int bytes_got = (azer->dst_idx + 7) / 8;
 	int i;
 
-	for (i = azer->data_len - 1; i >= 0; i--) {
+	for (i = bytes_got - 1; i >= 0; i--) {
 		strcatf(dst_str, "%02x", dst[i]);
 		strcatf(tmp_str, "%02x", tmp[i]);
 	}
