@@ -317,8 +317,8 @@ static int nec_on_flip_up(const analyzer_t *azer)
 	} else if (azer->state == ANALIZER_STATE_DATA) {
 		if ((azer->dur >= NEC_DATA0_L_LEN_MIN) &&
 		    (azer->dur <= NEC_DATA0_L_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata0 at %d\n",
-				  azer->msg_head, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2, "%sdata0 (bit%d) at %d\n",
+				  azer->msg_head, azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
 		} else if ((azer->dur >= NEC_DATA1_L_LEN_MIN) &&
 			   (azer->dur <= NEC_DATA1_L_LEN_MAX)) {
@@ -485,13 +485,13 @@ static int aeha_on_flip_up(const analyzer_t *azer)
 	} else if (azer->state == ANALIZER_STATE_DATA) {
 		if ((azer->dur >= AEHA_DATA0_L_LEN_MIN) &&
 		    (azer->dur <= AEHA_DATA0_L_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata0 at %d\n",
-				  azer->msg_head, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2, "%sdata0 (bit%d) at %d\n",
+				  azer->msg_head, azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
 		} else if ((azer->dur >= AEHA_DATA1_L_LEN_MIN) &&
 			   (azer->dur <= AEHA_DATA1_L_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata1 at %d\n",
-				  azer->msg_head, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2, "%sdata1 (bit%d) at %d\n",
+				  azer->msg_head, azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA1;
 		}
 	} else if (azer->state == ANALIZER_STATE_TRAILER) {
@@ -528,8 +528,8 @@ static void aeha_azer_init(analyzer_t *a)
 {
 	a->msg_head = "[AEHA] ";
 	a->data_bit_len_min = 48;	/* SHARP dvd, Panasonic STB */
-	a->data_bit_len_max = 48;
-	a->data_len = 6;
+	a->data_bit_len_max = 80;
+	a->data_len = 10;
 	a->leader_h_len_min  = AEHA_LEADER_H_LEN_MIN;
 	a->leader_h_len_max  = AEHA_LEADER_H_LEN_MAX;
 	a->leader_l_len_min  = AEHA_LEADER_L_LEN_MIN;
@@ -687,13 +687,13 @@ static int sony_on_each_sample(const analyzer_t *azer)
 		   (azer->dur == SONY_DATA_L_LEN_MIN)) {
 		if ((azer->dur_prev >= SONY_DATA0_H_LEN_MIN) &&
 		    (azer->dur_prev <= SONY_DATA0_H_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata0 at %d\n",
-				  azer->msg_head, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2, "%sdata0 (bit%d) at %d\n",
+				  azer->msg_head, azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
 		} else if ((azer->dur_prev >= SONY_DATA1_H_LEN_MIN) &&
 			   (azer->dur_prev <= SONY_DATA1_H_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata1 at %d\n",
-				  azer->msg_head, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2, "%sdata1 (bit%d) at %d\n",
+				  azer->msg_head, azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA1;
 		}
 	} else
@@ -818,15 +818,15 @@ static int koiz_on_flip_dn(const analyzer_t *azer)
 		    (azer->dur_prev <= KOIZ_DATA0_L_LEN_MAX) &&
 		    (azer->dur >= KOIZ_DATA0_H_LEN_MIN) &&
 		    (azer->dur <= KOIZ_DATA0_H_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata0 at %d\n",
-				  azer->msg_head, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2, "%sdata0 (bit%d) at %d\n",
+				  azer->msg_head, azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
 		} else if ((azer->dur_prev >= KOIZ_DATA1_L_LEN_MIN) &&
 			   (azer->dur_prev <= KOIZ_DATA1_L_LEN_MAX) &&
 			   (azer->dur >= KOIZ_DATA1_H_LEN_MIN) &&
 			   (azer->dur <= KOIZ_DATA1_H_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata1 at %d\n",
-				  azer->msg_head, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2, "%sdata1 (bit%d) at %d\n",
+				  azer->msg_head, azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA1;
 		} else if ((azer->dur_prev >= KOIZ_MARKER_L_LEN_MIN) &&
 			   (azer->dur_prev <= KOIZ_MARKER_L_LEN_MAX) &&
