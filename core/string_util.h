@@ -1,6 +1,8 @@
 #ifndef _STRING_UTIL_H
 #define _STRING_UTIL_H
 
+#include <string.h>
+
 static inline char *strchomp(char *s)
 {
 	size_t len = strlen(s);

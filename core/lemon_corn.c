@@ -32,11 +32,11 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include "lemon_corn_data.h"
-#include "remocon_format.h"
 #include "file_util.h"
 #include "string_util.h"
 #include "PC-OP-RS1.h"
 #include "lemon_squash.h"
+#include "format/remocon_format.h"
 
 #define DEBUG_HEAD_LEMON_CORN	"[lemon_corn] "
 #ifndef DEBUG_LEVEL_LEMON_CORN

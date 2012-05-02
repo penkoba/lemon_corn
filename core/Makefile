@@ -1,18 +1,36 @@
-CC := gcc
-CFLAGS := -Wall -W -O2
-LDFLAGS :=
+include include.mk
+
 TEST_OBJS := remocon-test.o
-OBJS := lemon_corn.o lemon_corn_data.o remocon_format.o file_util.o string_util.o
+OBJS := lemon_corn.o lemon_corn_data.o \
+	format/analyzer.o format/forger_common.o \
+	format/aeha.o format/nec.o format/sony.o \
+	format/daikin.o format/koizumi.o \
+	file_util.o string_util.o
 
-CFLAGS += -DAPP_DEBUG
-CFLAGS += -DDEBUG_LEVEL_REMOCON_TEST=0
-CFLAGS += -DDEBUG_LEVEL_LEMON_CORN=0
-CFLAGS += -DDEBUG_LEVEL_REMOCON_FORMAT=0
+SUBDIRS := format
 
-all: lemon_corn remocon-test
+.PHONY: all subdirs_all
 
-clean:
+all: subdirs_all lemon_corn remocon-test
+
+subdirs_all:
+	@for i in $(SUBDIRS); do \
+		if (! make -C $$i all); then \
+			exit 1; \
+		fi \
+	done
+
+.PHONY: clean subdirs_clean
+
+clean: subdirs_clean
 	-rm lemon_corn remocon-test *.o
+
+subdirs_clean:
+	@for i in $(SUBDIRS); do \
+		if (! make -C $$i clean); then \
+			exit 1; \
+		fi \
+	done
 
 check:
 	@echo "valid check commands are [ recv_check | trans_check ]"
@@ -24,11 +42,14 @@ trans_check: remocon-test
 remocon-test: $(TEST_OBJS)
 lemon_corn: $(OBJS)
 
-remocon-test.o: remocon-test.c PC-OP-RS1.h debug.h
+remocon-test.o: \
+	remocon-test.c PC-OP-RS1.h debug.h
 lemon_corn.o: \
-	lemon_corn.c PC-OP-RS1.h lemon_corn_data.h remocon_format.h \
+	lemon_corn.c PC-OP-RS1.h lemon_corn_data.h format/remocon_format.h \
 	debug.h file_util.h string_util.h
-lemon_corn_data.o: lemon_corn_data.c lemon_corn_data.h
-remocon_format.o: remocon_format.c string_util.h
-file_util.o: file_util.c
-string_util.o: string_util.c
+lemon_corn_data.o: \
+	lemon_corn_data.c lemon_corn_data.h
+file_util.o: \
+	file_util.c
+string_util.o: \
+	string_util.c
