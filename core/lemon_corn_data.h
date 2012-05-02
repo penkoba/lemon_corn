@@ -19,7 +19,7 @@
  *     tag:   command tag string
  *     data:  size is @len
  *
- *   when invalidating the entry, set 0 to first 4 bytes.
+ *   when invalidating the entry, set 0 to first 2 bytes.
  *
  */
 struct lcdata_ent_img_fxd {
