@@ -458,10 +458,10 @@ int remocon_format_forge_nec(unsigned char *ptn, size_t sz,
 #define AEHA_LEADER_L_LEN_MAX	1900
 #define AEHA_DATA_H_LEN_MIN	 300
 #define AEHA_DATA_H_LEN_TYP	 425
-#define AEHA_DATA_H_LEN_MAX	 500
+#define AEHA_DATA_H_LEN_MAX	 600
 #define AEHA_DATA0_L_LEN_MIN	 300
 #define AEHA_DATA0_L_LEN_TYP	 425
-#define AEHA_DATA0_L_LEN_MAX	 500
+#define AEHA_DATA0_L_LEN_MAX	 600
 #define AEHA_DATA1_L_LEN_MIN	1150
 #define AEHA_DATA1_L_LEN_TYP	1275
 #define AEHA_DATA1_L_LEN_MAX	1400
@@ -528,8 +528,9 @@ static void aeha_azer_init(analyzer_t *a)
 {
 	a->msg_head = "[AEHA] ";
 	a->data_bit_len_min = 48;	/* SHARP dvd, Panasonic STB */
-	a->data_bit_len_max = 80;
-	a->data_len = 10;
+	a->data_bit_len_max = 144;	/* Daikin aircon: 80bit,
+					   Mitsubishi aircon: 144 bit */
+	a->data_len = 18;
 	a->leader_h_len_min  = AEHA_LEADER_H_LEN_MIN;
 	a->leader_h_len_max  = AEHA_LEADER_H_LEN_MAX;
 	a->leader_l_len_min  = AEHA_LEADER_L_LEN_MIN;
@@ -602,6 +603,174 @@ int remocon_format_forge_aeha(unsigned char *ptn, size_t sz,
 		forge_dur(&fger, 1, AEHA_DATA_H_LEN_TYP);
 		/* trailer */
 		forge_dur(&fger, 0, AEHA_TRAILER_L_LEN_TYP);
+	}
+
+	return 0;
+}
+
+/*
+ * DAIKIN aircon format
+ *
+ * | leader | data | stop bit | trailer |
+ * leader:  ---------------------............  5ms / 2.2ms
+ * data0:   -----.....                                     0.4ms / 0.8ms
+ * data1:   -----.................                         0.4ms / 1.8ms
+ * trailer: ..............................                 20.0ms (> 8ms)
+ *
+ * data: 48 bit
+ */
+#define DKIN_LEADER_H_LEN_MIN	4500
+#define DKIN_LEADER_H_LEN_TYP	5000
+#define DKIN_LEADER_H_LEN_MAX	5500
+#define DKIN_LEADER_L_LEN_MIN	1900
+#define DKIN_LEADER_L_LEN_TYP	2200
+#define DKIN_LEADER_L_LEN_MAX	2500
+#define DKIN_DATA_H_LEN_MIN	 300
+#define DKIN_DATA_H_LEN_TYP	 400
+#define DKIN_DATA_H_LEN_MAX	 500
+#define DKIN_DATA0_L_LEN_MIN	 600
+#define DKIN_DATA0_L_LEN_TYP	 800
+#define DKIN_DATA0_L_LEN_MAX	1000
+#define DKIN_DATA1_L_LEN_MIN	1500
+#define DKIN_DATA1_L_LEN_TYP	1800
+#define DKIN_DATA1_L_LEN_MAX	2100
+#define DKIN_TRAILER_L_LEN_MIN	8000
+#define DKIN_TRAILER_L_LEN_TYP	30000	/* uknown */
+#define DKIN_TRAILER_L_LEN_MAX	1000000	/* no condition */
+#define DKIN_CYCLE_LEN_MIN	0	/* no condition */
+/* #define DKIN_CYCLE_LEN_TYP */
+#define DKIN_CYCLE_LEN_MAX	1000000	/* no condition */
+
+static int dkin_on_flip_up(const analyzer_t *azer)
+{
+	if (azer->state == ANALIZER_STATE_LEADER) {
+		if ((azer->dur >= azer->leader_l_len_min) &&
+		    (azer->dur <= azer->leader_l_len_max)) {
+			app_debug(REMOCON_FORMAT, 2,
+				  "%sleader detected at %d\n",
+				  azer->msg_head, azer->src_idx);
+			return DETECTED_PATTERN_LEADER;
+		}
+	} else if (azer->state == ANALIZER_STATE_DATA) {
+		if ((azer->dur >= DKIN_DATA0_L_LEN_MIN) &&
+		    (azer->dur <= DKIN_DATA0_L_LEN_MAX)) {
+			app_debug(REMOCON_FORMAT, 2, "%sdata0 (bit%d) at %d\n",
+				  azer->msg_head, azer->dst_idx, azer->src_idx);
+			return DETECTED_PATTERN_DATA0;
+		} else if ((azer->dur >= DKIN_DATA1_L_LEN_MIN) &&
+			   (azer->dur <= DKIN_DATA1_L_LEN_MAX)) {
+			app_debug(REMOCON_FORMAT, 2, "%sdata1 (bit%d) at %d\n",
+				  azer->msg_head, azer->dst_idx, azer->src_idx);
+			return DETECTED_PATTERN_DATA1;
+		}
+	} else if (azer->state == ANALIZER_STATE_TRAILER) {
+		return DETECTED_PATTERN_TRAILER;
+	}
+
+	app_debug(REMOCON_FORMAT, 1,
+		  "%sunmatched LOW duration (%4.1fms) at %d (state = %d)\n",
+		  azer->msg_head, azer->dur / 1000.0,
+		  azer->src_idx, azer->state);
+	return -1;
+}
+
+static int dkin_on_flip_dn(const analyzer_t *azer)
+{
+	if (azer->state == ANALIZER_STATE_LEADER) {
+		if ((azer->dur >= azer->leader_h_len_min) &&
+		    (azer->dur <= azer->leader_h_len_max))
+			return 0;
+	} else if (azer->state == ANALIZER_STATE_DATA) {
+		if ((azer->dur >= DKIN_DATA_H_LEN_MIN) &&
+		    (azer->dur <= DKIN_DATA_H_LEN_MAX))
+			return 0;
+	}
+
+	app_debug(REMOCON_FORMAT, 1,
+		  "%sunmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
+		   azer->msg_head, azer->dur / 1000.0,
+		   azer->src_idx, azer->state);
+	return -1;
+}
+
+static void dkin_azer_init(analyzer_t *a)
+{
+	a->msg_head = "[DKIN] ";
+	a->data_bit_len_min = 40;
+	a->data_bit_len_max = 80;
+	a->data_len = 10;
+	a->leader_h_len_min  = DKIN_LEADER_H_LEN_MIN;
+	a->leader_h_len_max  = DKIN_LEADER_H_LEN_MAX;
+	a->leader_l_len_min  = DKIN_LEADER_L_LEN_MIN;
+	a->leader_l_len_max  = DKIN_LEADER_L_LEN_MAX;
+	a->trailer_l_len_min = DKIN_TRAILER_L_LEN_MIN;
+	a->trailer_l_len_max = DKIN_TRAILER_L_LEN_MAX;
+	a->cycle_len_min     = DKIN_CYCLE_LEN_MIN;
+	a->cycle_len_max     = DKIN_CYCLE_LEN_MAX;
+	a->on_flip_up = dkin_on_flip_up;
+	a->on_flip_dn = dkin_on_flip_dn;
+	a->on_each_sample = NULL;
+	a->on_end_cycle = analyzer_on_end_cycle;
+}
+
+#define dkin_forge_leader(fger) \
+	forge_pulse(fger, DKIN_LEADER_H_LEN_TYP, AEHA_LEADER_L_LEN_TYP)
+#define dkin_forge_data0(fger) \
+	forge_pulse(fger, DKIN_DATA_H_LEN_TYP, AEHA_DATA0_L_LEN_TYP)
+#define dkin_forge_data1(fger) \
+	forge_pulse(fger, DKIN_DATA_H_LEN_TYP, AEHA_DATA1_L_LEN_TYP)
+
+int remocon_format_forge_dkin(unsigned char *ptn, size_t sz,
+			      unsigned long custom, unsigned long cmd)
+{
+	unsigned char custom_char[2] = {
+		(unsigned char)(custom & 0xff),
+		(unsigned char)(custom >> 8)
+	};
+	unsigned char custom_parity = (((custom >> 12) & 0xf) ^
+				       ((custom >>  8) & 0xf) ^
+				       ((custom >>  4) & 0xf) ^
+				       ( custom        & 0xf));
+	unsigned char cmd_char[4] = {
+		(unsigned char)( cmd        & 0xff),
+		(unsigned char)((cmd >>  8) & 0xff),
+		(unsigned char)((cmd >> 16) & 0xff),
+		(unsigned char)((cmd >> 24) & 0x0f),
+	};
+	int idx;
+	int repeat;
+	forger_t fger;
+
+	forger_init(&fger, ptn, sz);
+
+	for (repeat = 0; repeat < 2; repeat++) {
+		/* leader */
+		dkin_forge_leader(&fger);
+		/* custom */
+		for (idx = 0; idx < 16; idx++) {
+			if (get_bit_in_ary(custom_char, idx))
+				dkin_forge_data1(&fger);
+			else
+				dkin_forge_data0(&fger);
+		}
+		/* parity */
+		for (idx = 0; idx < 4; idx++) {
+			if (get_bit_in_ary(&custom_parity, idx))
+				dkin_forge_data1(&fger);
+			else
+				dkin_forge_data0(&fger);
+		}
+		/* cmd */
+		for (idx = 0; idx < 28; idx++) {
+			if (get_bit_in_ary(cmd_char, idx))
+				dkin_forge_data1(&fger);
+			else
+				dkin_forge_data0(&fger);
+		}
+		/* stop bit */
+		forge_dur(&fger, 1, DKIN_DATA_H_LEN_TYP);
+		/* trailer */
+		forge_dur(&fger, 0, DKIN_TRAILER_L_LEN_TYP);
 	}
 
 	return 0;
@@ -1054,6 +1223,29 @@ int remocon_format_analyze(char *fmt_tag, char *dst,
 				  custom, parity, cmd);
 		}
 		strcpy(fmt_tag, "AEHA");
+		sprintf(dst, "custom=%04x cmd=%07lx", custom, cmd);
+		return 0;
+	}
+
+	dkin_azer_init(&azer);
+	if (analyze(&azer, buf, ptn, sz) >= 0) {
+		unsigned short custom = ((unsigned short)buf[1] << 8) | buf[0];
+		unsigned char parity = buf[2] & 0xf;
+		unsigned long cmd = ( (unsigned long)buf[5]         << 20) |
+				    ( (unsigned long)buf[4]         << 12) |
+				    ( (unsigned long)buf[3]         <<  4) |
+				    (((unsigned long)buf[2] & 0xf0) >>  4);
+		if ((((buf[0] >> 4) & 0xf) ^
+		      (buf[0] & 0xf) ^
+		     ((buf[1] >> 4) & 0xf) ^
+		      (buf[1] & 0xf)) != parity) {
+			app_debug(REMOCON_FORMAT, 1,
+				  "DKIN pattern detected, but"
+				  " parity is inconsistent.\n"
+				  "%04x %01x %07lx",
+				  custom, parity, cmd);
+		}
+		strcpy(fmt_tag, "DKIN");
 		sprintf(dst, "custom=%04x cmd=%07lx", custom, cmd);
 		return 0;
 	}
