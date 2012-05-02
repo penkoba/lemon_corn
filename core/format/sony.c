@@ -170,10 +170,9 @@ int sony_on_end_cycle(const analyzer_t *azer,
 	return 0;
 }
 
+/* bit len = 12, 15, 20 */
 struct analyzer_config sony_azer_cfg = {
 	.fmt_tag = "SONY",
-	.data_bit_len_min = 12,	/* 12, 15, 20 bits */
-	.data_bit_len_max = 20,
 	.data_len = 3,
 	.leader_h_len_min  = SONY_LEADER_H_LEN_MIN,
 	.leader_h_len_max  = SONY_LEADER_H_LEN_MAX,

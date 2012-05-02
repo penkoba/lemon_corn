@@ -188,10 +188,9 @@ static int nec_on_end_cycle(const analyzer_t *azer,
 	return 0;
 }
 
+/* bit len = 32 */
 struct analyzer_config nec_azer_cfg = {
 	.fmt_tag = "NEC",
-	.data_bit_len_min = 32,
-	.data_bit_len_max = 32,
 	.data_len = 4,
 	.leader_h_len_min  = NEC_LEADER_H_LEN_MIN,
 	.leader_h_len_max  = NEC_LEADER_H_LEN_MAX,

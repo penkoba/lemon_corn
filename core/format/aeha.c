@@ -165,11 +165,13 @@ static int aeha_on_end_cycle(const analyzer_t *azer,
 	return 0;
 }
 
+/*
+ * SHARP dvd, Panasonic STB: 48bit
+ * Daikin aircon: 80bit,
+ * Mitsubishi aircon: 144 bit
+ */
 struct analyzer_config aeha_azer_cfg = {
 	.fmt_tag = "AEHA",
-	.data_bit_len_min = 48,		/* SHARP dvd, Panasonic STB */
-	.data_bit_len_max = 160,	/* Daikin aircon: 80bit,
-					   Mitsubishi aircon: 144 bit */
 	.data_len = 18,
 	.leader_h_len_min  = AEHA_LEADER_H_LEN_MIN,
 	.leader_h_len_max  = AEHA_LEADER_H_LEN_MAX,

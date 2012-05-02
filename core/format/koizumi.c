@@ -193,10 +193,9 @@ static int koiz_on_end_cycle(const analyzer_t *azer,
 	return 0;
 }
 
+/* bit len = 9 or 9 + 3 + 9 */
 struct analyzer_config koiz_azer_cfg = {
 	.fmt_tag = "KOIZ",
-	.data_bit_len_min = 9,		/* 9 or 9 + 3 + 9 */
-	.data_bit_len_max = 21,
 	.data_len = 3,
 	.leader_h_len_min = 700,	/* typ = 8.3 */
 	.leader_h_len_max = 1000,

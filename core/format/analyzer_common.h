@@ -11,7 +11,6 @@
 
 /*
  * maximum analyzer data length
- * (data_bit_len_max must be less than ANALYZER_DATA_LEN_MAX * 8)
  */
 #define ANALYZER_DATA_LEN_MAX  64
 
@@ -50,8 +49,6 @@ typedef struct analyzer analyzer_t;
  */
 struct analyzer_config {
 	const char *fmt_tag;
-	int data_bit_len_min;
-	int data_bit_len_max;
 	int data_len;
 	int leader_h_len_min;
 	int leader_h_len_max;

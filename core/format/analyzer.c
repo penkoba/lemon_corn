@@ -50,7 +50,7 @@ static void analyzer_init(analyzer_t *azer)
 static int analyzer_on_bit_detected(const analyzer_t *azer, unsigned char *buf,
 				    unsigned char bit)
 {
-	if (azer->dst_idx == azer->cfg->data_bit_len_max) {
+	if (azer->dst_idx == ANALYZER_DATA_LEN_MAX * 8) {
 		app_debug(ANALYZER, 1, "[%s] too long data\n",
 			  azer->cfg->fmt_tag);
 		return -1;
@@ -79,12 +79,6 @@ static inline int analyzer_try_detect_trailer(const analyzer_t *azer)
 	    (azer->state == ANALYZER_STATE_DATA) &&
 	    (azer->dur >= azer->cfg->trailer_l_len_min) &&
 	    (azer->dur_cycle >= azer->cfg->cycle_len_min)) {
-		if (azer->dst_idx < azer->cfg->data_bit_len_min) {
-			app_debug(ANALYZER, 1,
-				  "[%s] data length (%d) unmatched\n",
-				  azer->cfg->fmt_tag, azer->dst_idx);
-			return -1;
-		}
 		app_debug(ANALYZER, 2, "[%s] trailer detected at %d\n",
 			  azer->cfg->fmt_tag, azer->src_idx);
 		return DETECTED_PATTERN_TRAILER;
@@ -120,11 +114,6 @@ analyze(struct analyzer_config *azer_cfg, struct analyzer_ops *azer_ops,
 
 	azer.cfg = azer_cfg;
 	azer.ops = azer_ops;
-
-	/*
-	 * configuration sanity check
-	 */
-	assert(azer.cfg->data_bit_len_max < ANALYZER_DATA_LEN_MAX * 8);
 
 	analyzer_init(&azer);
 	for (azer.src_idx = 0; azer.src_idx < (int)sz_bit; azer.src_idx++) {

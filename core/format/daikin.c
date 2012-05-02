@@ -163,8 +163,6 @@ static int dkin_on_end_cycle(const analyzer_t *azer,
 
 struct analyzer_config dkin_azer_cfg = {
 	.fmt_tag = "DKIN",
-	.data_bit_len_min = 40,
-	.data_bit_len_max = 80,
 	.data_len = 10,
 	.leader_h_len_min  = DKIN_LEADER_H_LEN_MIN,
 	.leader_h_len_max  = DKIN_LEADER_H_LEN_MAX,
