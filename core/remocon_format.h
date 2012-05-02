@@ -7,7 +7,7 @@ extern int remocon_format_forge_aeha(unsigned char *ptn, size_t sz,
 				     unsigned long custom, unsigned long cmd);
 extern int remocon_format_forge_sony(unsigned char *ptn, size_t sz,
 				     unsigned long prod, unsigned long cmd);
-extern int remocon_format_analyze(char *fmt_tag, char *dst,
+extern int remocon_format_analyze(char *fmt_tag, char *dst_str,
 				  const unsigned char *ptn, size_t sz);
 
 #endif	/* _REMOCON_FORMAT_H */

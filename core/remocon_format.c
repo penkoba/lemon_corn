@@ -31,6 +31,9 @@
 #endif
 #include "debug.h"
 
+#define UNUSED(x)	(void)(x)
+#define ARRAY_SIZE(a)	(sizeof(a) / sizeof(a[0]))
+
 static inline char get_bit_in_ary(const unsigned char *ary, int idx)
 {
 	return (ary[idx / 8] >> (idx & 0x7)) & 0x01;
@@ -42,7 +45,7 @@ static inline void set_bit_in_ary(unsigned char *ary, int idx)
 }
 
 /*
- * analyzer
+ * enum to indicate what data an analyzer detected
  */
 enum {
 	DETECTED_PATTERN_DATA0 = 1,
@@ -55,22 +58,28 @@ enum {
 	DETECTED_PATTERN_REPEATER_H,
 };
 
-#define DATA_LEN_MAX	64
-
+/*
+ * analyzer state
+ */
 enum analyzer_state {
-	ANALIZER_STATE_LEADER,
-	ANALIZER_STATE_DATA,
-	ANALIZER_STATE_TRAILER,
-	ANALIZER_STATE_MARKER,
-	ANALIZER_STATE_REPEATER,
+	ANALYZER_STATE_LEADER,
+	ANALYZER_STATE_DATA,
+	ANALYZER_STATE_TRAILER,
+	ANALYZER_STATE_MARKER,
+	ANALYZER_STATE_REPEATER,
 };
 
-typedef struct analyzer analyzer_t;
-struct analyzer {
-	/*
-	 * config
-	 */
-	const char *msg_head;
+/*
+ * maximum analyzer data length
+ * (data_bit_len_max must be less than ANALYZER_DATA_LEN_MAX * 8)
+ */
+#define ANALYZER_DATA_LEN_MAX	64
+
+/*
+ * analyzer configuration
+ */
+struct analyzer_config {
+	const char *fmt_tag;
 	int data_bit_len_min;
 	int data_bit_len_max;
 	int data_len;
@@ -82,15 +91,32 @@ struct analyzer {
 	int trailer_l_len_max;
 	int cycle_len_min;
 	int cycle_len_max;
+};
 
-	/*
-	 * check function
-	 */
+/*
+ * pre-define analyzer_t
+ */
+typedef struct analyzer analyzer_t;
+
+/*
+ * analyzer operators
+ */
+struct analyzer_ops {
 	int (*on_flip_up)(const analyzer_t *azer);
 	int (*on_flip_dn)(const analyzer_t *azer);
 	int (*on_each_sample)(const analyzer_t *azer);
 	int (*on_end_cycle)(const analyzer_t *azer,
-			    unsigned char *dst, const unsigned char *tmp);
+			    unsigned char *buf, const unsigned char *tmp);
+	int (*on_exit)(const analyzer_t *azer, unsigned char *buf,
+		       char *dst_str);
+};
+
+/*
+ * analyzer struct
+ */
+struct analyzer {
+	const struct analyzer_config *cfg;
+	const struct analyzer_ops *ops;
 
 	/*
 	 * state
@@ -104,29 +130,32 @@ struct analyzer {
 	int dur_cycle;
 };
 
+/*
+ * analyzer functions
+ */
 static void analyzer_init(analyzer_t *azer)
 {
 	azer->dst_idx = 0;
 	azer->cycle = 0;
 
-	azer->state = ANALIZER_STATE_TRAILER;
+	azer->state = ANALYZER_STATE_TRAILER;
 	/* assuming we had enough 0s */
 	azer->level = 0;
-	azer->dur = azer->trailer_l_len_min;
+	azer->dur = azer->cfg->trailer_l_len_min;
 	azer->dur_prev = 0;
-	azer->dur_cycle = azer->cycle_len_min;
+	azer->dur_cycle = azer->cfg->cycle_len_min;
 }
 
-static int analyzer_on_bit_detected(const analyzer_t *azer, unsigned char *dst,
+static int analyzer_on_bit_detected(const analyzer_t *azer, unsigned char *buf,
 				    unsigned char bit)
 {
-	if (azer->dst_idx == azer->data_bit_len_max) {
-		app_debug(REMOCON_FORMAT, 1, "%stoo long data\n",
-			  azer->msg_head);
+	if (azer->dst_idx == azer->cfg->data_bit_len_max) {
+		app_debug(REMOCON_FORMAT, 1, "[%s] too long data\n",
+			  azer->cfg->fmt_tag);
 		return -1;
 	}
 	if (bit)
-		set_bit_in_ary(dst, azer->dst_idx);
+		set_bit_in_ary(buf, azer->dst_idx);
 	return 0;
 }
 
@@ -138,36 +167,36 @@ static inline int analyzer_on_flipped(analyzer_t *azer)
 		  azer->dur / 1000.0, azer->dur_cycle / 1000.0);
 
 	if (azer->level == 0)
-		return azer->on_flip_up(azer);
+		return azer->ops->on_flip_up(azer);
 	else	/* azer->level = 1 */
-		return azer->on_flip_dn(azer);
+		return azer->ops->on_flip_dn(azer);
 }
 
 static int analyzer_on_end_cycle(const analyzer_t *azer,
-				 unsigned char *dst, const unsigned char *tmp)
+				 unsigned char *buf, const unsigned char *tmp)
 {
-	char dst_str[DATA_LEN_MAX * 2] = "";
-	char tmp_str[DATA_LEN_MAX * 2] = "";
+	char dst_str[ANALYZER_DATA_LEN_MAX * 2] = "";
+	char tmp_str[ANALYZER_DATA_LEN_MAX * 2] = "";
 	int bytes_got = (azer->dst_idx + 7) / 8;
 	int i;
 
 	for (i = bytes_got - 1; i >= 0; i--) {
-		strcatf(dst_str, "%02x", dst[i]);
+		strcatf(dst_str, "%02x", buf[i]);
 		strcatf(tmp_str, "%02x", tmp[i]);
 	}
 
-	app_debug(REMOCON_FORMAT, 1, "%scycle %d data got: %s (%d bits)\n",
-		  azer->msg_head, azer->cycle, tmp_str, azer->dst_idx);
+	app_debug(REMOCON_FORMAT, 1, "[%s] cycle %d data got: %s (%d bits)\n",
+		  azer->cfg->fmt_tag, azer->cycle, tmp_str, azer->dst_idx);
 
 	if (azer->cycle == 0)
-		memcpy(dst, tmp, azer->data_len);
+		memcpy(buf, tmp, azer->cfg->data_len);
 	else {
-		if (memcmp(dst, tmp, azer->data_len)) {
+		if (memcmp(buf, tmp, azer->cfg->data_len)) {
 			app_debug(REMOCON_FORMAT, 1,
-				  "%sdata unmatched in cycles:\n"
+				  "[%s] data unmatched in cycles:\n"
 				  " data 1: %s\n"
 				  " data %d: %s\n",
-				  azer->msg_head, dst_str,
+				  azer->cfg->fmt_tag, dst_str,
 				  azer->cycle + 1, tmp_str);
 			return -1;
 		}
@@ -179,17 +208,17 @@ static int analyzer_on_end_cycle(const analyzer_t *azer,
 static inline int analyzer_try_detect_trailer(const analyzer_t *azer)
 {
 	if ((azer->level == 0) &&
-	    (azer->state == ANALIZER_STATE_DATA) &&
-	    (azer->dur >= azer->trailer_l_len_min) &&
-	    (azer->dur_cycle >= azer->cycle_len_min)) {
-		if (azer->dst_idx < azer->data_bit_len_min) {
+	    (azer->state == ANALYZER_STATE_DATA) &&
+	    (azer->dur >= azer->cfg->trailer_l_len_min) &&
+	    (azer->dur_cycle >= azer->cfg->cycle_len_min)) {
+		if (azer->dst_idx < azer->cfg->data_bit_len_min) {
 			app_debug(REMOCON_FORMAT, 1,
-				  "%sdata length (%d) unmatched\n",
-				  azer->msg_head, azer->dst_idx);
+				  "[%s] data length (%d) unmatched\n",
+				  azer->cfg->fmt_tag, azer->dst_idx);
 			return -1;
 		}
-		app_debug(REMOCON_FORMAT, 2, "%strailer detected at %d\n",
-			  azer->msg_head, azer->src_idx);
+		app_debug(REMOCON_FORMAT, 2, "[%s] trailer detected at %d\n",
+			  azer->cfg->fmt_tag, azer->src_idx);
 		return DETECTED_PATTERN_TRAILER;
 	}
 
@@ -203,8 +232,8 @@ static int analyzer_on_each_sample(const analyzer_t *azer)
 	r = analyzer_try_detect_trailer(azer);
 	if (r)
 		return r;
-	if (azer->on_each_sample)
-		r = azer->on_each_sample(azer);
+	if (azer->ops->on_each_sample)
+		r = azer->ops->on_each_sample(azer);
 	return r;
 }
 
@@ -301,13 +330,13 @@ static void forge_pulse(forger_t *fger, int h_len, int l_len)
 
 static int nec_on_flip_up(const analyzer_t *azer)
 {
-	if (azer->state == ANALIZER_STATE_LEADER) {
+	if (azer->state == ANALYZER_STATE_LEADER) {
 		if (azer->cycle == 0) {
-			if ((azer->dur >= azer->leader_l_len_min) &&
-			    (azer->dur <= azer->leader_l_len_max)) {
+			if ((azer->dur >= azer->cfg->leader_l_len_min) &&
+			    (azer->dur <= azer->cfg->leader_l_len_max)) {
 				app_debug(REMOCON_FORMAT, 2,
-					  "%sleader detected at %d\n",
-					  azer->msg_head, azer->src_idx);
+					  "[%s] leader detected at %d\n",
+					  azer->cfg->fmt_tag, azer->src_idx);
 				return DETECTED_PATTERN_LEADER;
 			}
 		} else {	/* expect repeat signal */
@@ -315,74 +344,99 @@ static int nec_on_flip_up(const analyzer_t *azer)
 			    (azer->dur <= NEC_REPEATER_L_LEN_MAX))
 				return DETECTED_PATTERN_REPEATER_L;
 		}
-	} else if (azer->state == ANALIZER_STATE_DATA) {
+	} else if (azer->state == ANALYZER_STATE_DATA) {
 		if ((azer->dur >= NEC_DATA0_L_LEN_MIN) &&
 		    (azer->dur <= NEC_DATA0_L_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata0 (bit%d) at %d\n",
-				  azer->msg_head, azer->dst_idx, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2,
+				  "[%s] data0 (bit%d) at %d\n",
+				  azer->cfg->fmt_tag,
+				  azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
 		} else if ((azer->dur >= NEC_DATA1_L_LEN_MIN) &&
 			   (azer->dur <= NEC_DATA1_L_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata1 at %d\n",
-				  azer->msg_head, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2, "[%s] data1 at %d\n",
+				  azer->cfg->fmt_tag, azer->src_idx);
 			return DETECTED_PATTERN_DATA1;
 		}
-	} else if (azer->state == ANALIZER_STATE_TRAILER) {
+	} else if (azer->state == ANALYZER_STATE_TRAILER) {
 		return DETECTED_PATTERN_TRAILER;
 	}
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched LOW duration (%4.1fms) at %d (state = %d)\n",
-		  azer->msg_head, azer->dur / 1000.0, azer->src_idx, azer->state);
+		  "[%s] unmatched LOW duration (%4.1fms) at %d (state = %d)\n",
+		  azer->cfg->fmt_tag,
+		  azer->dur / 1000.0, azer->src_idx, azer->state);
 	return -1;
 }
 
 static int nec_on_flip_dn(const analyzer_t *azer)
 {
-	if (azer->state == ANALIZER_STATE_LEADER) {
-		if ((azer->dur >= azer->leader_h_len_min) &&
-		    (azer->dur <= azer->leader_h_len_max))
+	if (azer->state == ANALYZER_STATE_LEADER) {
+		if ((azer->dur >= azer->cfg->leader_h_len_min) &&
+		    (azer->dur <= azer->cfg->leader_h_len_max))
 			return 0;
-	} else if (azer->state == ANALIZER_STATE_REPEATER) {
+	} else if (azer->state == ANALYZER_STATE_REPEATER) {
 		if ((azer->dur >= NEC_DATA_H_LEN_MIN) &&
 		    (azer->dur <= NEC_DATA_H_LEN_MAX)) {
 			app_debug(REMOCON_FORMAT, 2,
-				  "%srepeater detected at %d\n",
-				  azer->msg_head, azer->src_idx);
+				  "[%s] repeater detected at %d\n",
+				  azer->cfg->fmt_tag, azer->src_idx);
 			return DETECTED_PATTERN_REPEATER_H;
 		}
-	} else if (azer->state == ANALIZER_STATE_DATA) {
+	} else if (azer->state == ANALYZER_STATE_DATA) {
 		if ((azer->dur >= NEC_DATA_H_LEN_MIN) &&
 		    (azer->dur <= NEC_DATA_H_LEN_MAX))
 			return 0;
 	}
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
-		   azer->msg_head, azer->dur / 1000.0,
+		  "[%s] unmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
+		   azer->cfg->fmt_tag, azer->dur / 1000.0,
 		   azer->src_idx, azer->state);
 	return -1;
 }
 
-static void nec_azer_init(analyzer_t *a)
+static int nec_on_exit(const analyzer_t *azer, unsigned char *buf,
+		       char *dst_str)
 {
-	a->msg_head = "[NEC] ";
-	a->data_bit_len_min = 32;
-	a->data_bit_len_max = 32;
-	a->data_len = 4;
-	a->leader_h_len_min  = NEC_LEADER_H_LEN_MIN;
-	a->leader_h_len_max  = NEC_LEADER_H_LEN_MAX;
-	a->leader_l_len_min  = NEC_LEADER_L_LEN_MIN;
-	a->leader_l_len_max  = NEC_LEADER_L_LEN_MAX;
-	a->trailer_l_len_min = NEC_TRAILER_L_LEN_MIN;
-	a->trailer_l_len_max = NEC_TRAILER_L_LEN_MAX;
-	a->cycle_len_min     = NEC_CYCLE_LEN_MIN;
-	a->cycle_len_max     = NEC_CYCLE_LEN_MAX;
-	a->on_flip_up = nec_on_flip_up;
-	a->on_flip_dn = nec_on_flip_dn;
-	a->on_each_sample = NULL;
-	a->on_end_cycle = analyzer_on_end_cycle;
+	unsigned short custom = ((unsigned short)buf[0] << 8) | buf[1];
+	unsigned char cmd = buf[2];
+
+	UNUSED(azer);
+	/* NOTE: custom' is not always ~custom !! */
+	if (buf[2] != (unsigned char)~buf[3]) {
+		app_debug(REMOCON_FORMAT, 1,
+			  "%s pattern detected, but data is inconsistent.\n"
+			  "%02x%02x %02x%02x",
+			  azer->cfg->fmt_tag, buf[0], buf[1], buf[2], buf[3]);
+		return -1;
+	}
+	sprintf(dst_str, "custom=%04x cmd=%02x", custom, cmd);
+	return 0;
 }
+
+static struct analyzer_config nec_azer_cfg = {
+	.fmt_tag = "NEC",
+	.data_bit_len_min = 32,
+	.data_bit_len_max = 32,
+	.data_len = 4,
+	.leader_h_len_min  = NEC_LEADER_H_LEN_MIN,
+	.leader_h_len_max  = NEC_LEADER_H_LEN_MAX,
+	.leader_l_len_min  = NEC_LEADER_L_LEN_MIN,
+	.leader_l_len_max  = NEC_LEADER_L_LEN_MAX,
+	.trailer_l_len_min = NEC_TRAILER_L_LEN_MIN,
+	.trailer_l_len_max = NEC_TRAILER_L_LEN_MAX,
+	.cycle_len_min     = NEC_CYCLE_LEN_MIN,
+	.cycle_len_max     = NEC_CYCLE_LEN_MAX,
+};
+
+static struct analyzer_ops nec_azer_ops = {
+	.on_flip_up = nec_on_flip_up,
+	.on_flip_dn = nec_on_flip_dn,
+	.on_each_sample = NULL,
+	.on_end_cycle = analyzer_on_end_cycle,
+	.on_exit = nec_on_exit,
+};
 
 #define nec_forge_leader(fger) \
 	forge_pulse(fger, NEC_LEADER_H_LEN_TYP, NEC_LEADER_L_LEN_TYP)
@@ -475,76 +529,107 @@ int remocon_format_forge_nec(unsigned char *ptn, size_t sz,
 
 static int aeha_on_flip_up(const analyzer_t *azer)
 {
-	if (azer->state == ANALIZER_STATE_LEADER) {
-		if ((azer->dur >= azer->leader_l_len_min) &&
-		    (azer->dur <= azer->leader_l_len_max)) {
+	if (azer->state == ANALYZER_STATE_LEADER) {
+		if ((azer->dur >= azer->cfg->leader_l_len_min) &&
+		    (azer->dur <= azer->cfg->leader_l_len_max)) {
 			app_debug(REMOCON_FORMAT, 2,
-				  "%sleader detected at %d\n",
-				  azer->msg_head, azer->src_idx);
+				  "[%s] leader detected at %d\n",
+				  azer->cfg->fmt_tag, azer->src_idx);
 			return DETECTED_PATTERN_LEADER;
 		}
-	} else if (azer->state == ANALIZER_STATE_DATA) {
+	} else if (azer->state == ANALYZER_STATE_DATA) {
 		if ((azer->dur >= AEHA_DATA0_L_LEN_MIN) &&
 		    (azer->dur <= AEHA_DATA0_L_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata0 (bit%d) at %d\n",
-				  azer->msg_head, azer->dst_idx, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2,
+				  "[%s] data0 (bit%d) at %d\n",
+				  azer->cfg->fmt_tag,
+				  azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
 		} else if ((azer->dur >= AEHA_DATA1_L_LEN_MIN) &&
 			   (azer->dur <= AEHA_DATA1_L_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata1 (bit%d) at %d\n",
-				  azer->msg_head, azer->dst_idx, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2,
+				  "[%s] data1 (bit%d) at %d\n",
+				  azer->cfg->fmt_tag,
+				  azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA1;
 		}
-	} else if (azer->state == ANALIZER_STATE_TRAILER) {
+	} else if (azer->state == ANALYZER_STATE_TRAILER) {
 		return DETECTED_PATTERN_TRAILER;
 	}
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched LOW duration (%4.1fms) at %d (state = %d)\n",
-		  azer->msg_head, azer->dur / 1000.0,
+		  "[%s] unmatched LOW duration (%4.1fms) at %d (state = %d)\n",
+		  azer->cfg->fmt_tag, azer->dur / 1000.0,
 		  azer->src_idx, azer->state);
 	return -1;
 }
 
 static int aeha_on_flip_dn(const analyzer_t *azer)
 {
-	if (azer->state == ANALIZER_STATE_LEADER) {
-		if ((azer->dur >= azer->leader_h_len_min) &&
-		    (azer->dur <= azer->leader_h_len_max))
+	if (azer->state == ANALYZER_STATE_LEADER) {
+		if ((azer->dur >= azer->cfg->leader_h_len_min) &&
+		    (azer->dur <= azer->cfg->leader_h_len_max))
 			return 0;
-	} else if (azer->state == ANALIZER_STATE_DATA) {
+	} else if (azer->state == ANALYZER_STATE_DATA) {
 		if ((azer->dur >= AEHA_DATA_H_LEN_MIN) &&
 		    (azer->dur <= AEHA_DATA_H_LEN_MAX))
 			return 0;
 	}
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
-		   azer->msg_head, azer->dur / 1000.0,
+		  "[%s] unmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
+		   azer->cfg->fmt_tag, azer->dur / 1000.0,
 		   azer->src_idx, azer->state);
 	return -1;
 }
 
-static void aeha_azer_init(analyzer_t *a)
+static int aeha_on_exit(const analyzer_t *azer, unsigned char *buf,
+			char *dst_str)
 {
-	a->msg_head = "[AEHA] ";
-	a->data_bit_len_min = 48;	/* SHARP dvd, Panasonic STB */
-	a->data_bit_len_max = 144;	/* Daikin aircon: 80bit,
-					   Mitsubishi aircon: 144 bit */
-	a->data_len = 18;
-	a->leader_h_len_min  = AEHA_LEADER_H_LEN_MIN;
-	a->leader_h_len_max  = AEHA_LEADER_H_LEN_MAX;
-	a->leader_l_len_min  = AEHA_LEADER_L_LEN_MIN;
-	a->leader_l_len_max  = AEHA_LEADER_L_LEN_MAX;
-	a->trailer_l_len_min = AEHA_TRAILER_L_LEN_MIN;
-	a->trailer_l_len_max = AEHA_TRAILER_L_LEN_MAX;
-	a->cycle_len_min     = AEHA_CYCLE_LEN_MIN;
-	a->cycle_len_max     = AEHA_CYCLE_LEN_MAX;
-	a->on_flip_up = aeha_on_flip_up;
-	a->on_flip_dn = aeha_on_flip_dn;
-	a->on_each_sample = NULL;
-	a->on_end_cycle = analyzer_on_end_cycle;
+	unsigned short custom = ((unsigned short)buf[1] << 8) | buf[0];
+	unsigned char parity = buf[2] & 0xf;
+	unsigned long cmd = ( (unsigned long)buf[5]         << 20) |
+			    ( (unsigned long)buf[4]         << 12) |
+			    ( (unsigned long)buf[3]         <<  4) |
+			    (((unsigned long)buf[2] & 0xf0) >>  4);
+
+	UNUSED(azer);
+	if ((((buf[0] >> 4) & 0xf) ^
+	      (buf[0] & 0xf) ^
+	     ((buf[1] >> 4) & 0xf) ^
+	      (buf[1] & 0xf)) != parity) {
+		app_debug(REMOCON_FORMAT, 1,
+			  "%s pattern detected, but parity is inconsistent.\n"
+			  "%04x %01x %07lx",
+			  azer->cfg->fmt_tag, custom, parity, cmd);
+	}
+	sprintf(dst_str, "custom=%04x cmd=%07lx", custom, cmd);
+	return 0;
 }
+
+static struct analyzer_config aeha_azer_cfg = {
+	.fmt_tag = "AEHA",
+	.data_bit_len_min = 48,		/* SHARP dvd, Panasonic STB */
+	.data_bit_len_max = 144,	/* Daikin aircon: 80bit,
+					   Mitsubishi aircon: 144 bit */
+	.data_len = 18,
+	.leader_h_len_min  = AEHA_LEADER_H_LEN_MIN,
+	.leader_h_len_max  = AEHA_LEADER_H_LEN_MAX,
+	.leader_l_len_min  = AEHA_LEADER_L_LEN_MIN,
+	.leader_l_len_max  = AEHA_LEADER_L_LEN_MAX,
+	.trailer_l_len_min = AEHA_TRAILER_L_LEN_MIN,
+	.trailer_l_len_max = AEHA_TRAILER_L_LEN_MAX,
+	.cycle_len_min     = AEHA_CYCLE_LEN_MIN,
+	.cycle_len_max     = AEHA_CYCLE_LEN_MAX,
+};
+
+static struct analyzer_ops aeha_azer_ops = {
+	.on_flip_up = aeha_on_flip_up,
+	.on_flip_dn = aeha_on_flip_dn,
+	.on_each_sample = NULL,
+	.on_end_cycle = analyzer_on_end_cycle,
+	.on_exit = aeha_on_exit,
+};
 
 #define aeha_forge_leader(fger) \
 	forge_pulse(fger, AEHA_LEADER_H_LEN_TYP, AEHA_LEADER_L_LEN_TYP)
@@ -644,75 +729,106 @@ int remocon_format_forge_aeha(unsigned char *ptn, size_t sz,
 
 static int dkin_on_flip_up(const analyzer_t *azer)
 {
-	if (azer->state == ANALIZER_STATE_LEADER) {
-		if ((azer->dur >= azer->leader_l_len_min) &&
-		    (azer->dur <= azer->leader_l_len_max)) {
+	if (azer->state == ANALYZER_STATE_LEADER) {
+		if ((azer->dur >= azer->cfg->leader_l_len_min) &&
+		    (azer->dur <= azer->cfg->leader_l_len_max)) {
 			app_debug(REMOCON_FORMAT, 2,
-				  "%sleader detected at %d\n",
-				  azer->msg_head, azer->src_idx);
+				  "[%s] leader detected at %d\n",
+				  azer->cfg->fmt_tag, azer->src_idx);
 			return DETECTED_PATTERN_LEADER;
 		}
-	} else if (azer->state == ANALIZER_STATE_DATA) {
+	} else if (azer->state == ANALYZER_STATE_DATA) {
 		if ((azer->dur >= DKIN_DATA0_L_LEN_MIN) &&
 		    (azer->dur <= DKIN_DATA0_L_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata0 (bit%d) at %d\n",
-				  azer->msg_head, azer->dst_idx, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2,
+				  "[%s] data0 (bit%d) at %d\n",
+				  azer->cfg->fmt_tag,
+				  azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
 		} else if ((azer->dur >= DKIN_DATA1_L_LEN_MIN) &&
 			   (azer->dur <= DKIN_DATA1_L_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata1 (bit%d) at %d\n",
-				  azer->msg_head, azer->dst_idx, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2,
+				  "[%s] data1 (bit%d) at %d\n",
+				  azer->cfg->fmt_tag,
+				  azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA1;
 		}
-	} else if (azer->state == ANALIZER_STATE_TRAILER) {
+	} else if (azer->state == ANALYZER_STATE_TRAILER) {
 		return DETECTED_PATTERN_TRAILER;
 	}
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched LOW duration (%4.1fms) at %d (state = %d)\n",
-		  azer->msg_head, azer->dur / 1000.0,
+		  "[%s] unmatched LOW duration (%4.1fms) at %d (state = %d)\n",
+		  azer->cfg->fmt_tag, azer->dur / 1000.0,
 		  azer->src_idx, azer->state);
 	return -1;
 }
 
 static int dkin_on_flip_dn(const analyzer_t *azer)
 {
-	if (azer->state == ANALIZER_STATE_LEADER) {
-		if ((azer->dur >= azer->leader_h_len_min) &&
-		    (azer->dur <= azer->leader_h_len_max))
+	if (azer->state == ANALYZER_STATE_LEADER) {
+		if ((azer->dur >= azer->cfg->leader_h_len_min) &&
+		    (azer->dur <= azer->cfg->leader_h_len_max))
 			return 0;
-	} else if (azer->state == ANALIZER_STATE_DATA) {
+	} else if (azer->state == ANALYZER_STATE_DATA) {
 		if ((azer->dur >= DKIN_DATA_H_LEN_MIN) &&
 		    (azer->dur <= DKIN_DATA_H_LEN_MAX))
 			return 0;
 	}
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
-		   azer->msg_head, azer->dur / 1000.0,
+		  "[%s] unmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
+		   azer->cfg->fmt_tag, azer->dur / 1000.0,
 		   azer->src_idx, azer->state);
 	return -1;
 }
 
-static void dkin_azer_init(analyzer_t *a)
+static int dkin_on_exit(const analyzer_t *azer, unsigned char *buf,
+			char *dst_str)
 {
-	a->msg_head = "[DKIN] ";
-	a->data_bit_len_min = 40;
-	a->data_bit_len_max = 80;
-	a->data_len = 10;
-	a->leader_h_len_min  = DKIN_LEADER_H_LEN_MIN;
-	a->leader_h_len_max  = DKIN_LEADER_H_LEN_MAX;
-	a->leader_l_len_min  = DKIN_LEADER_L_LEN_MIN;
-	a->leader_l_len_max  = DKIN_LEADER_L_LEN_MAX;
-	a->trailer_l_len_min = DKIN_TRAILER_L_LEN_MIN;
-	a->trailer_l_len_max = DKIN_TRAILER_L_LEN_MAX;
-	a->cycle_len_min     = DKIN_CYCLE_LEN_MIN;
-	a->cycle_len_max     = DKIN_CYCLE_LEN_MAX;
-	a->on_flip_up = dkin_on_flip_up;
-	a->on_flip_dn = dkin_on_flip_dn;
-	a->on_each_sample = NULL;
-	a->on_end_cycle = analyzer_on_end_cycle;
+	unsigned short custom = ((unsigned short)buf[1] << 8) | buf[0];
+	unsigned char parity = buf[2] & 0xf;
+	unsigned long cmd = ( (unsigned long)buf[5]         << 20) |
+			    ( (unsigned long)buf[4]         << 12) |
+			    ( (unsigned long)buf[3]         <<  4) |
+			    (((unsigned long)buf[2] & 0xf0) >>  4);
+
+	UNUSED(azer);
+	if ((((buf[0] >> 4) & 0xf) ^
+	      (buf[0] & 0xf) ^
+	     ((buf[1] >> 4) & 0xf) ^
+	      (buf[1] & 0xf)) != parity) {
+		app_debug(REMOCON_FORMAT, 1,
+			  "%s pattern detected, but parity is inconsistent.\n"
+			  "%04x %01x %07lx",
+			  azer->cfg->fmt_tag, custom, parity, cmd);
+	}
+	sprintf(dst_str, "custom=%04x cmd=%07lx", custom, cmd);
+	return 0;
 }
+
+static struct analyzer_config dkin_azer_cfg = {
+	.fmt_tag = "DKIN",
+	.data_bit_len_min = 40,
+	.data_bit_len_max = 80,
+	.data_len = 10,
+	.leader_h_len_min  = DKIN_LEADER_H_LEN_MIN,
+	.leader_h_len_max  = DKIN_LEADER_H_LEN_MAX,
+	.leader_l_len_min  = DKIN_LEADER_L_LEN_MIN,
+	.leader_l_len_max  = DKIN_LEADER_L_LEN_MAX,
+	.trailer_l_len_min = DKIN_TRAILER_L_LEN_MIN,
+	.trailer_l_len_max = DKIN_TRAILER_L_LEN_MAX,
+	.cycle_len_min     = DKIN_CYCLE_LEN_MIN,
+	.cycle_len_max     = DKIN_CYCLE_LEN_MAX,
+};
+
+static struct analyzer_ops dkin_azer_ops = {
+	.on_flip_up = dkin_on_flip_up,
+	.on_flip_dn = dkin_on_flip_dn,
+	.on_each_sample = NULL,
+	.on_end_cycle = analyzer_on_end_cycle,
+	.on_exit = dkin_on_exit,
+};
 
 #define dkin_forge_leader(fger) \
 	forge_pulse(fger, DKIN_LEADER_H_LEN_TYP, AEHA_LEADER_L_LEN_TYP)
@@ -812,88 +928,110 @@ int remocon_format_forge_dkin(unsigned char *ptn, size_t sz,
 
 static int sony_on_flip_up(const analyzer_t *azer)
 {
-	if (azer->state == ANALIZER_STATE_LEADER) {
+	if (azer->state == ANALYZER_STATE_LEADER) {
 		/* didn't have enough 0 for leader */
-	} else if (azer->state == ANALIZER_STATE_DATA) {
+	} else if (azer->state == ANALYZER_STATE_DATA) {
 		if ((azer->dur >= SONY_DATA_L_LEN_MIN) &&
 		    (azer->dur <= SONY_DATA_L_LEN_MAX))
 			return 0;
-	} else if (azer->state == ANALIZER_STATE_TRAILER)
+	} else if (azer->state == ANALYZER_STATE_TRAILER)
 		return DETECTED_PATTERN_TRAILER;
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched LOW duration (%4.1fms) at %d (state = %d)\n",
-		  azer->msg_head, azer->dur / 1000.0,
+		  "[%s] unmatched LOW duration (%4.1fms) at %d (state = %d)\n",
+		  azer->cfg->fmt_tag, azer->dur / 1000.0,
 		  azer->src_idx, azer->state);
 	return -1;
 }
 
 static int sony_on_flip_dn(const analyzer_t *azer)
 {
-	if (azer->state == ANALIZER_STATE_LEADER) {
-		if ((azer->dur >= azer->leader_h_len_min) &&
-		    (azer->dur <= azer->leader_h_len_max))
+	if (azer->state == ANALYZER_STATE_LEADER) {
+		if ((azer->dur >= azer->cfg->leader_h_len_min) &&
+		    (azer->dur <= azer->cfg->leader_h_len_max))
 			return 0;
 	} else
 		return 0;
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
-		   azer->msg_head, azer->dur / 1000.0,
+		  "[%s] unmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
+		   azer->cfg->fmt_tag, azer->dur / 1000.0,
 		   azer->src_idx, azer->state);
 	return -1;
 }
 
 static int sony_on_each_sample(const analyzer_t *azer)
 {
-	if ((azer->state == ANALIZER_STATE_LEADER) &&
+	if ((azer->state == ANALYZER_STATE_LEADER) &&
 	    (azer->level == 0) &&
-	    (azer->dur == azer->leader_l_len_min)) {
-		app_debug(REMOCON_FORMAT, 2, "%sleader detected at %d\n",
-			  azer->msg_head, azer->src_idx);
+	    (azer->dur == azer->cfg->leader_l_len_min)) {
+		app_debug(REMOCON_FORMAT, 2, "[%s] leader detected at %d\n",
+			  azer->cfg->fmt_tag, azer->src_idx);
 		return DETECTED_PATTERN_LEADER;
-	} else if ((azer->state == ANALIZER_STATE_DATA) &&
+	} else if ((azer->state == ANALYZER_STATE_DATA) &&
 		   (azer->level == 0) &&
 		   (azer->dur == SONY_DATA_L_LEN_MIN)) {
 		if ((azer->dur_prev >= SONY_DATA0_H_LEN_MIN) &&
 		    (azer->dur_prev <= SONY_DATA0_H_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata0 (bit%d) at %d\n",
-				  azer->msg_head, azer->dst_idx, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2,
+				  "[%s] data0 (bit%d) at %d\n",
+				  azer->cfg->fmt_tag,
+				  azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
 		} else if ((azer->dur_prev >= SONY_DATA1_H_LEN_MIN) &&
 			   (azer->dur_prev <= SONY_DATA1_H_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata1 (bit%d) at %d\n",
-				  azer->msg_head, azer->dst_idx, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2,
+				  "[%s] data1 (bit%d) at %d\n",
+				  azer->cfg->fmt_tag,
+				  azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA1;
 		}
 	} else
 		return 0;
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
-		  azer->msg_head, azer->dur_prev / 1000.0,
+		  "[%s] unmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
+		  azer->cfg->fmt_tag, azer->dur_prev / 1000.0,
 		  azer->src_idx - azer->dur / 100, azer->state);
 	return -1;
 }
 
-static void sony_azer_init(analyzer_t *a)
+static int sony_on_exit(const analyzer_t *azer, unsigned char *buf,
+			char *dst_str)
 {
-	a->msg_head = "[SONY] ";
-	a->data_bit_len_min = 12;	/* 12, 15, 20 bits */
-	a->data_bit_len_max = 20;
-	a->data_len = 3;
-	a->leader_h_len_min  = SONY_LEADER_H_LEN_MIN;
-	a->leader_h_len_max  = SONY_LEADER_H_LEN_MAX;
-	a->leader_l_len_min  = SONY_LEADER_L_LEN_MIN;
-	a->leader_l_len_max  = SONY_LEADER_L_LEN_MAX;
-	a->trailer_l_len_min = SONY_TRAILER_L_LEN_MIN;
-	a->trailer_l_len_max = SONY_TRAILER_L_LEN_MAX;
-	a->cycle_len_min     = SONY_CYCLE_LEN_MIN;
-	a->cycle_len_max     = SONY_CYCLE_LEN_MAX;
-	a->on_flip_up = sony_on_flip_up;
-	a->on_flip_dn = sony_on_flip_dn;
-	a->on_each_sample = sony_on_each_sample;
-	a->on_end_cycle = analyzer_on_end_cycle;
+	unsigned char cmd;
+	unsigned short prod;
+
+	UNUSED(azer);
+	cmd = buf[0] & 0x7f;
+	prod = ((unsigned short)buf[2] << 9) |
+	       ((unsigned short)buf[1] << 1) |
+	       (buf[0] >> 7);
+	sprintf(dst_str, "prod=%04x cmd=%02x", prod, cmd);
+	return 0;
+}
+
+static struct analyzer_config sony_azer_cfg = {
+	.fmt_tag = "SONY",
+	.data_bit_len_min = 12,	/* 12, 15, 20 bits */
+	.data_bit_len_max = 20,
+	.data_len = 3,
+	.leader_h_len_min  = SONY_LEADER_H_LEN_MIN,
+	.leader_h_len_max  = SONY_LEADER_H_LEN_MAX,
+	.leader_l_len_min  = SONY_LEADER_L_LEN_MIN,
+	.leader_l_len_max  = SONY_LEADER_L_LEN_MAX,
+	.trailer_l_len_min = SONY_TRAILER_L_LEN_MIN,
+	.trailer_l_len_max = SONY_TRAILER_L_LEN_MAX,
+	.cycle_len_min     = SONY_CYCLE_LEN_MIN,
+	.cycle_len_max     = SONY_CYCLE_LEN_MAX,
+};
+
+static struct analyzer_ops sony_azer_ops = {
+	.on_flip_up = sony_on_flip_up,
+	.on_flip_dn = sony_on_flip_dn,
+	.on_each_sample = sony_on_each_sample,
+	.on_end_cycle = analyzer_on_end_cycle,
+	.on_exit = sony_on_exit,
 };
 
 #define sony_forge_leader(fger) \
@@ -972,124 +1110,130 @@ int remocon_format_forge_sony(unsigned char *ptn, size_t sz,
 
 static int koiz_on_flip_up(const analyzer_t *azer)
 {
-	if (azer->state == ANALIZER_STATE_TRAILER)
+	if (azer->state == ANALYZER_STATE_TRAILER)
 		return DETECTED_PATTERN_TRAILER;
 	return 0;
 }
 
 static int koiz_on_flip_dn(const analyzer_t *azer)
 {
-	if (azer->state == ANALIZER_STATE_LEADER) {
-		if ((azer->dur >= azer->leader_h_len_min) &&
-		    (azer->dur <= azer->leader_h_len_max))
+	if (azer->state == ANALYZER_STATE_LEADER) {
+		if ((azer->dur >= azer->cfg->leader_h_len_min) &&
+		    (azer->dur <= azer->cfg->leader_h_len_max))
 			return 0;
-	} else if (azer->state == ANALIZER_STATE_DATA) {
+	} else if (azer->state == ANALYZER_STATE_DATA) {
 		if ((azer->dur_prev >= KOIZ_DATA0_L_LEN_MIN) &&
 		    (azer->dur_prev <= KOIZ_DATA0_L_LEN_MAX) &&
 		    (azer->dur >= KOIZ_DATA0_H_LEN_MIN) &&
 		    (azer->dur <= KOIZ_DATA0_H_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata0 (bit%d) at %d\n",
-				  azer->msg_head, azer->dst_idx, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2,
+				  "[%s] data0 (bit%d) at %d\n",
+				  azer->cfg->fmt_tag,
+				  azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA0;
 		} else if ((azer->dur_prev >= KOIZ_DATA1_L_LEN_MIN) &&
 			   (azer->dur_prev <= KOIZ_DATA1_L_LEN_MAX) &&
 			   (azer->dur >= KOIZ_DATA1_H_LEN_MIN) &&
 			   (azer->dur <= KOIZ_DATA1_H_LEN_MAX)) {
-			app_debug(REMOCON_FORMAT, 2, "%sdata1 (bit%d) at %d\n",
-				  azer->msg_head, azer->dst_idx, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2,
+				  "[%s] data1 (bit%d) at %d\n",
+				  azer->cfg->fmt_tag,
+				  azer->dst_idx, azer->src_idx);
 			return DETECTED_PATTERN_DATA1;
 		} else if ((azer->dur_prev >= KOIZ_MARKER_L_LEN_MIN) &&
 			   (azer->dur_prev <= KOIZ_MARKER_L_LEN_MAX) &&
-			   (azer->dur >= azer->leader_h_len_min) &&
-			   (azer->dur <= azer->leader_h_len_max)) {
+			   (azer->dur >= azer->cfg->leader_h_len_min) &&
+			   (azer->dur <= azer->cfg->leader_h_len_max)) {
 			if ((azer->dst_idx != KOIZ_MARKER_BIT_POS1) &&
 			    (azer->dst_idx != KOIZ_MARKER_BIT_POS2)) {
 				app_debug(REMOCON_FORMAT, 2,
-					  "%sunexpected marker position (%d)"
+					  "[%s] unexpected marker position (%d)"
 					  " at %d\n",
-					  azer->msg_head, azer->dst_idx,
+					  azer->cfg->fmt_tag, azer->dst_idx,
 					  azer->src_idx);
 				return -1;
 			}
-			app_debug(REMOCON_FORMAT, 2, "%smarker at %d\n",
-				  azer->msg_head, azer->src_idx);
+			app_debug(REMOCON_FORMAT, 2, "[%s] marker at %d\n",
+				  azer->cfg->fmt_tag, azer->src_idx);
 			return DETECTED_PATTERN_MARKER;
 		}
 	} else
 		return 0;
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched pattern:"
+		  "[%s] unmatched pattern:"
 		  " LOW duration (%4.1fms) / HIGH duration (%4.1fms)"
 		  " at %d (state = %d)\n",
-		   azer->msg_head, azer->dur_prev / 1000.0, azer->dur / 1000.0,
+		   azer->cfg->fmt_tag,
+		   azer->dur_prev / 1000.0, azer->dur / 1000.0,
 		   azer->src_idx, azer->state);
 	return -1;
 }
 
 static int koiz_on_each_sample(const analyzer_t *azer)
 {
-	if ((azer->state == ANALIZER_STATE_LEADER) &&
+	if ((azer->state == ANALYZER_STATE_LEADER) &&
 	    (azer->level == 0) &&
-	    (azer->dur == azer->leader_l_len_min)) {
-		app_debug(REMOCON_FORMAT, 2, "%sleader detected at %d\n",
-			  azer->msg_head, azer->src_idx);
+	    (azer->dur == azer->cfg->leader_l_len_min)) {
+		app_debug(REMOCON_FORMAT, 2, "[%s] leader detected at %d\n",
+			  azer->cfg->fmt_tag, azer->src_idx);
 		return DETECTED_PATTERN_LEADER;
 	} else
 		return 0;
 
 	app_debug(REMOCON_FORMAT, 1,
-		  "%sunmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
-		  azer->msg_head, azer->dur_prev / 1000.0,
+		  "[%s] unmatched HIGH duration (%4.1fms) at %d (state = %d)\n",
+		  azer->cfg->fmt_tag, azer->dur_prev / 1000.0,
 		  azer->src_idx - azer->dur / 100, azer->state);
 	return -1;
 }
 
 static int koiz_on_end_cycle(const analyzer_t *azer,
-			     unsigned char *dst, const unsigned char *tmp)
+			     unsigned char *buf, const unsigned char *tmp)
 {
-	char dst_str[DATA_LEN_MAX * 2] = "";
-	char tmp_str[DATA_LEN_MAX * 2] = "";
+	char dst_str[ANALYZER_DATA_LEN_MAX * 2] = "";
+	char tmp_str[ANALYZER_DATA_LEN_MAX * 2] = "";
 	int bytes_got = (azer->dst_idx + 7) / 8;
 	int i;
 
 	for (i = bytes_got - 1; i >= 0; i--) {
-		strcatf(dst_str, "%02x", dst[i]);
+		strcatf(dst_str, "%02x", buf[i]);
 		strcatf(tmp_str, "%02x", tmp[i]);
 	}
 
-	app_debug(REMOCON_FORMAT, 1, "%scycle %d data got: %s\n",
-		  azer->msg_head, azer->cycle, tmp_str);
+	app_debug(REMOCON_FORMAT, 1, "[%s] cycle %d data got: %s\n",
+		  azer->cfg->fmt_tag, azer->cycle, tmp_str);
 
 	/*
 	 * cycle1:           command only
 	 * cycle2 and after: command + id + command
 	 */
 	if (azer->cycle == 0)
-		memcpy(dst, tmp, azer->data_len);
+		memcpy(buf, tmp, azer->cfg->data_len);
 	else if (azer->cycle == 1) {
 		unsigned short dst_cmd, tmp_cmd1, tmp_cmd2;
-		dst_cmd = (dst[1] << 8) | dst[0];
+		dst_cmd = (buf[1] << 8) | buf[0];
 		tmp_cmd1 = (((unsigned short)tmp[1] << 8) | tmp[0]) & 0x1ff;
 		tmp_cmd2 = (((unsigned short)tmp[2] << 4) |
 			    ((unsigned short)tmp[1] >> 4)) & 0x1ff;
 		if ((dst_cmd != tmp_cmd1) ||
 		    (dst_cmd != tmp_cmd2)) {
 			app_debug(REMOCON_FORMAT, 1,
-				  "%scommand unmatched in second stage:\n"
+				  "[%s] command unmatched in second stage:\n"
 				  " first cmd: %04x\n"
 				  " second cmd1: %04x, cmd2: %04x\n",
-				  azer->msg_head, dst_cmd, tmp_cmd1, tmp_cmd2);
+				  azer->cfg->fmt_tag,
+				  dst_cmd, tmp_cmd1, tmp_cmd2);
 			return -1;
 		}
-		memcpy(dst, tmp, azer->data_len);
+		memcpy(buf, tmp, azer->cfg->data_len);
 	} else {
-		if (memcmp(dst, tmp, azer->data_len)) {
+		if (memcmp(buf, tmp, azer->cfg->data_len)) {
 			app_debug(REMOCON_FORMAT, 1,
-				  "%sdata unmatched in cycles:\n"
+				  "[%s] data unmatched in cycles:\n"
 				  " data 1: %s\n"
 				  " data %d: %s\n",
-				  azer->msg_head, dst_str,
+				  azer->cfg->fmt_tag, dst_str,
 				  azer->cycle + 1, tmp_str);
 			return -1;
 		}
@@ -1098,202 +1242,158 @@ static int koiz_on_end_cycle(const analyzer_t *azer,
 	return 0;
 }
 
-static void koiz_azer_init(analyzer_t *a)
+static int koiz_on_exit(const analyzer_t *azer, unsigned char *buf,
+			char *dst_str)
 {
-	a->msg_head = "[KOIZ] ";
-	a->data_bit_len_min = 9;	/* 9 or 9 + 3 + 9 */
-	a->data_bit_len_max = 21;
-	a->data_len = 3;
-	a->leader_h_len_min = 700;	/* typ = 8.3 */
-	a->leader_h_len_max = 1000;
-	a->leader_l_len_min = 700;	/* typ = 8.3 or 16.7 */
-	a->leader_l_len_max = 1900;
+	UNUSED(azer);
+	unsigned char id;
+	unsigned short cmd;
 
-	a->trailer_l_len_min = 11900;	/* typ = 132 */
-	a->trailer_l_len_max = 14500;
-	a->cycle_len_min = 0;		/* no condition */
-	a->cycle_len_max = 1000000;	/* no condition */
-	a->on_flip_up = koiz_on_flip_up;
-	a->on_flip_dn = koiz_on_flip_dn;
-	a->on_each_sample = koiz_on_each_sample;
-	a->on_end_cycle = koiz_on_end_cycle;
+	id = (buf[1] >> 1) & 0x7;
+	cmd = (((unsigned short)buf[1] << 8) | buf[0]) & 0x1ff;
+	sprintf(dst_str, "id=%02x cmd=%04x", id, cmd);
+	return 0;
 }
+
+static struct analyzer_config koiz_azer_cfg = {
+	.fmt_tag = "KOIZ",
+	.data_bit_len_min = 9,		/* 9 or 9 + 3 + 9 */
+	.data_bit_len_max = 21,
+	.data_len = 3,
+	.leader_h_len_min = 700,	/* typ = 8.3 */
+	.leader_h_len_max = 1000,
+	.leader_l_len_min = 700,	/* typ = 8.3 or 16.7 */
+	.leader_l_len_max = 1900,
+	.trailer_l_len_min = 11900,	/* typ = 132 */
+	.trailer_l_len_max = 14500,
+	.cycle_len_min = 0,		/* no condition */
+	.cycle_len_max = 1000000,	/* no condition */
+};
+
+static struct analyzer_ops koiz_azer_ops = {
+	.on_flip_up = koiz_on_flip_up,
+	.on_flip_dn = koiz_on_flip_dn,
+	.on_each_sample = koiz_on_each_sample,
+	.on_end_cycle = koiz_on_end_cycle,
+	.on_exit = koiz_on_exit,
+};
 
 /*
  * generic analyzer func
  */
-static int analyze(analyzer_t *azer, unsigned char *dst,
-		   const unsigned char *ptn, size_t sz)
+static int
+analyze(struct analyzer_config *azer_cfg, struct analyzer_ops *azer_ops,
+	char *fmt_tag, char *dst_str, const unsigned char *ptn, size_t sz)
 {
-	unsigned char dst_tmp[DATA_LEN_MAX] = { 0 };
+	analyzer_t azer;
+	unsigned char buf[ANALYZER_DATA_LEN_MAX];
+	unsigned char buf_tmp[ANALYZER_DATA_LEN_MAX] = { 0 };
 	size_t sz_bit = sz * 8;
 	int r;
 
-	analyzer_init(azer);
-	for (azer->src_idx = 0; azer->src_idx < (int)sz_bit; azer->src_idx++) {
-		char this_bit = get_bit_in_ary(ptn, azer->src_idx);
+	azer.cfg = azer_cfg;
+	azer.ops = azer_ops;
 
-		if ((azer->state == ANALIZER_STATE_DATA) ||
-		    (azer->state == ANALIZER_STATE_TRAILER))
-			azer->dur_cycle += 100;
+	/*
+	 * configuration sanity check
+	 */
+	assert(azer.cfg->data_bit_len_max < ANALYZER_DATA_LEN_MAX * 8);
 
-		if (this_bit == azer->level) {
-			azer->dur += 100;
+	analyzer_init(&azer);
+	for (azer.src_idx = 0; azer.src_idx < (int)sz_bit; azer.src_idx++) {
+		char this_bit = get_bit_in_ary(ptn, azer.src_idx);
+
+		if ((azer.state == ANALYZER_STATE_DATA) ||
+		    (azer.state == ANALYZER_STATE_TRAILER))
+			azer.dur_cycle += 100;
+
+		if (this_bit == azer.level) {
+			azer.dur += 100;
 		} else {
-			r = analyzer_on_flipped(azer);
+			r = analyzer_on_flipped(&azer);
 			if (r < 0)
 				return -1;
 			else if (r == DETECTED_PATTERN_LEADER) {
-				azer->state = ANALIZER_STATE_DATA;
-				azer->dst_idx = 0;
-				azer->dur_cycle = azer->dur_prev + azer->dur;
+				azer.state = ANALYZER_STATE_DATA;
+				azer.dst_idx = 0;
+				azer.dur_cycle = azer.dur_prev + azer.dur;
 			} else if (r == DETECTED_PATTERN_TRAILER) {
-				azer->state = ANALIZER_STATE_LEADER;
-				azer->dur_cycle = 100;
+				azer.state = ANALYZER_STATE_LEADER;
+				azer.dur_cycle = 100;
 			} else if (r == DETECTED_PATTERN_MARKER) {
 				/* nothing to do */
 			} else if (r == DETECTED_PATTERN_REPEATER_L) {
-				azer->state = ANALIZER_STATE_REPEATER;
+				azer.state = ANALYZER_STATE_REPEATER;
 			} else if (r == DETECTED_PATTERN_REPEATER_H) {
-				azer->state = ANALIZER_STATE_TRAILER;
+				azer.state = ANALYZER_STATE_TRAILER;
 			} else if (r > 0) {	/* data */
 				int dat = (r == DETECTED_PATTERN_DATA1) ? 1 : 0;
-				if (analyzer_on_bit_detected(azer, dst_tmp,
+				if (analyzer_on_bit_detected(&azer, buf_tmp,
 							     dat) < 0)
 					return -1;
-				azer->dst_idx++;
+				azer.dst_idx++;
 			}
 
-			azer->level = this_bit;
-			azer->dur_prev = azer->dur;
-			azer->dur = 100;
+			azer.level = this_bit;
+			azer.dur_prev = azer.dur;
+			azer.dur = 100;
 		}
 
-		r = analyzer_on_each_sample(azer);
+		r = analyzer_on_each_sample(&azer);
 		if (r < 0)
 			return -1;
 		else if (r == DETECTED_PATTERN_LEADER) {
-			azer->state = ANALIZER_STATE_DATA;
-			azer->dst_idx = 0;
-			azer->dur_cycle = azer->dur_prev + azer->dur;
+			azer.state = ANALYZER_STATE_DATA;
+			azer.dst_idx = 0;
+			azer.dur_cycle = azer.dur_prev + azer.dur;
 		} else if (r == DETECTED_PATTERN_TRAILER) {
-			if (azer->on_end_cycle(azer, dst, dst_tmp) < 0)
+			if (azer.ops->on_end_cycle(&azer, buf, buf_tmp) < 0)
 				return -1;
-			azer->cycle++;
-			azer->state = ANALIZER_STATE_TRAILER;
+			azer.cycle++;
+			azer.state = ANALYZER_STATE_TRAILER;
 		} else if (r == DETECTED_PATTERN_MARKER) {
 			/* nothing to do */
 		} else if (r > 0) {	/* data */
 			int dat = (r == DETECTED_PATTERN_DATA1) ? 1 : 0;
-			if (analyzer_on_bit_detected(azer, dst_tmp, dat) < 0)
+			if (analyzer_on_bit_detected(&azer, buf_tmp, dat) < 0)
 				return -1;
-			azer->dst_idx++;
+			azer.dst_idx++;
 		}
 	}
 
-	if (azer->cycle == 0) {
-		app_debug(REMOCON_FORMAT, 1, "%sno data cycle detected\n",
-			  azer->msg_head);
+	if (azer.cycle == 0) {
+		app_debug(REMOCON_FORMAT, 1, "[%s] no data cycle detected\n",
+			  azer.cfg->fmt_tag);
 		return -1;
 	}
 
-	return azer->data_len;
+	/* successfully analyzed */
+	if (azer.ops->on_exit(&azer, buf, dst_str) < 0)
+		return -1;
+	strcpy(fmt_tag, azer.cfg->fmt_tag);
+
+	return azer.cfg->data_len;
 }
 
-int remocon_format_analyze(char *fmt_tag, char *dst,
+int remocon_format_analyze(char *fmt_tag, char *dst_str,
 			   const unsigned char *ptn, size_t sz)
 {
-	unsigned char buf[DATA_LEN_MAX];
-	analyzer_t azer;
+	struct {
+		struct analyzer_config *cfg;
+		struct analyzer_ops *ops;
+	} analyzer_set[] = {
+		{ &aeha_azer_cfg, &aeha_azer_ops },
+		{ &dkin_azer_cfg, &dkin_azer_ops },
+		{ &nec_azer_cfg,  &nec_azer_ops },
+		{ &sony_azer_cfg, &sony_azer_ops },
+		{ &koiz_azer_cfg, &koiz_azer_ops },
+	};
+	unsigned int i;
 
-	aeha_azer_init(&azer);
-	if (analyze(&azer, buf, ptn, sz) >= 0) {
-		unsigned short custom = ((unsigned short)buf[1] << 8) | buf[0];
-		unsigned char parity = buf[2] & 0xf;
-		unsigned long cmd = ( (unsigned long)buf[5]         << 20) |
-				    ( (unsigned long)buf[4]         << 12) |
-				    ( (unsigned long)buf[3]         <<  4) |
-				    (((unsigned long)buf[2] & 0xf0) >>  4);
-		if ((((buf[0] >> 4) & 0xf) ^
-		      (buf[0] & 0xf) ^
-		     ((buf[1] >> 4) & 0xf) ^
-		      (buf[1] & 0xf)) != parity) {
-			app_debug(REMOCON_FORMAT, 1,
-				  "AEHA pattern detected, but"
-				  " parity is inconsistent.\n"
-				  "%04x %01x %07lx",
-				  custom, parity, cmd);
-		}
-		strcpy(fmt_tag, "AEHA");
-		sprintf(dst, "custom=%04x cmd=%07lx", custom, cmd);
-		return 0;
-	}
-
-	dkin_azer_init(&azer);
-	if (analyze(&azer, buf, ptn, sz) >= 0) {
-		unsigned short custom = ((unsigned short)buf[1] << 8) | buf[0];
-		unsigned char parity = buf[2] & 0xf;
-		unsigned long cmd = ( (unsigned long)buf[5]         << 20) |
-				    ( (unsigned long)buf[4]         << 12) |
-				    ( (unsigned long)buf[3]         <<  4) |
-				    (((unsigned long)buf[2] & 0xf0) >>  4);
-		if ((((buf[0] >> 4) & 0xf) ^
-		      (buf[0] & 0xf) ^
-		     ((buf[1] >> 4) & 0xf) ^
-		      (buf[1] & 0xf)) != parity) {
-			app_debug(REMOCON_FORMAT, 1,
-				  "DKIN pattern detected, but"
-				  " parity is inconsistent.\n"
-				  "%04x %01x %07lx",
-				  custom, parity, cmd);
-		}
-		strcpy(fmt_tag, "DKIN");
-		sprintf(dst, "custom=%04x cmd=%07lx", custom, cmd);
-		return 0;
-	}
-
-	nec_azer_init(&azer);
-	if (analyze(&azer, buf, ptn, sz) >= 0) {
-		unsigned short custom = ((unsigned short)buf[0] << 8) | buf[1];
-		unsigned char cmd = buf[2];
-		/* NOTE: custom' is not always ~custom !! */
-		if (buf[2] != (unsigned char)~buf[3]) {
-			app_debug(REMOCON_FORMAT, 1,
-				  "NEC pattern detected, but"
-				  " data is inconsistent.\n"
-				  "%02x%02x %02x%02x",
-				  buf[0], buf[1], buf[2], buf[3]);
-			return -1;
-		}
-		strcpy(fmt_tag, "NEC");
-		sprintf(dst, "custom=%04x cmd=%02x", custom, cmd);
-		return 0;
-	}
-
-	sony_azer_init(&azer);
-	if (analyze(&azer, buf, ptn, sz) >= 0) {
-		unsigned char cmd;
-		unsigned short prod;
-
-		cmd = buf[0] & 0x7f;
-		prod = ((unsigned short)buf[2] << 9) |
-		       ((unsigned short)buf[1] << 1) |
-		       (buf[0] >> 7);
-		strcpy(fmt_tag, "SONY");
-		sprintf(dst, "prod=%04x cmd=%02x", prod, cmd);
-		return 0;
-	}
-
-	koiz_azer_init(&azer);
-	if (analyze(&azer, buf, ptn, sz) >= 0) {
-		unsigned char id;
-		unsigned short cmd;
-
-		id = (buf[1] >> 1) & 0x7;
-		cmd = (((unsigned short)buf[1] << 8) | buf[0]) & 0x1ff;
-		strcpy(fmt_tag, "KOIZ");
-		sprintf(dst, "id=%02x cmd=%04x", id, cmd);
-		return 0;
+	for (i = 0; i < ARRAY_SIZE(analyzer_set); i++) {
+		if (analyze(analyzer_set[i].cfg, analyzer_set[i].ops,
+			    fmt_tag, dst_str, ptn, sz) >= 0)
+			return 0;
 	}
 
 	return -1;
