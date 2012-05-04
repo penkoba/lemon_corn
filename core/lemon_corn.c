@@ -345,7 +345,7 @@ static int receive(int fd, unsigned char *data, size_t sz)
 			return -1;
 		if (remocon_expect(fd, PCOPRS1_CMD_RECEIVE_DATA) < 0)
 			return -1;
-		if ((read_len = remocon_read(fd, data, PCOPRS1_DATA_LEN)) < 0)
+		if ((read_len = remocon_read(fd, data, sz)) < 0)
 			return -1;
 		if (remocon_expect(fd, PCOPRS1_CMD_DATA_COMPLETION) < 0)
 			return -1;
@@ -773,6 +773,7 @@ static int parse_arg(int argc, char *argv[])
 			if (++i == argc)
 				return -1;
 			app.data_len = atoi(argv[i]);
+			app.trunc_len = app.data_len;
 		} else if (!strcmp(argv[i], "-trunc")) {
 			if (++i == argc)
 				return -1;
