@@ -153,13 +153,15 @@ static int aeha_on_end_cycle(const analyzer_t *azer,
 	}
 
 	if (azer->cycle == 0) {
-		sprintf(dst_str, "custom=%s cmd=%s", custom_str, cmd_str);
+		sprintf(dst_str, "custom=%s cmd=%s (%d bits in total)",
+			custom_str, cmd_str, azer->dst_idx);
 		memcpy(buf0, buf, azer->cfg->data_len);
 	} else {
 		/* concat if data is different from previous */
 		if (memcmp(buf0, buf, azer->cfg->data_len))
-			strcatf(dst_str, " + custom=%s cmd=%s",
-				custom_str, cmd_str);
+			strcatf(dst_str,
+				" + custom=%s cmd=%s (%d bits in total)",
+				custom_str, cmd_str, azer->dst_idx);
 	}
 
 	return 0;
