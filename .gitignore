@@ -1,4 +1,7 @@
 /core/lemon_corn
+/core/lemon_corn.exe
 /core/remocon-test
+/core/remocon-test.exe
 /serial_proxyd/serial_proxyd
+/serial_proxyd/serial_proxyd.exe
 *.o
