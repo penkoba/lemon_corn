@@ -44,8 +44,6 @@ static void handler(int signo)
 {
 	syslog(LOG_NOTICE, "signal %d received.\n", signo);
 	had_signal = 1;
-	if (signo == SIGKILL)
-		exit(0);
 }
 
 static void setup_signal(void)
@@ -54,16 +52,11 @@ static void setup_signal(void)
 
 	sigact.sa_handler = handler;
 
-	/* SIGTERM, SIGKILL */
+	/* SIGTERM */
 	__sigemptyset(&sigact.sa_mask);
-	sigact.sa_flags = SA_NOMASK | SA_ONESHOT;
+	sigact.sa_flags = SA_NOMASK | SA_RESETHAND;
 	sigact.sa_restorer = NULL;
 	sigaction(SIGTERM, &sigact, NULL);
-
-	__sigemptyset(&sigact.sa_mask);
-	sigact.sa_flags = SA_NOMASK | SA_ONESHOT;
-	sigact.sa_restorer = NULL;
-	sigaction(SIGKILL, &sigact, NULL);
 }
 
 static int daemonize(void)
