@@ -54,7 +54,7 @@ static void setup_signal(void)
 
 	/* SIGTERM */
 	__sigemptyset(&sigact.sa_mask);
-	sigact.sa_flags = SA_NOMASK | SA_RESETHAND;
+	sigact.sa_flags = SA_NODEFER | SA_RESETHAND;
 	sigact.sa_restorer = NULL;
 	sigaction(SIGTERM, &sigact, NULL);
 }
